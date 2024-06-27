@@ -1,0 +1,12 @@
+{
+    "TimeOfDay": 850,
+    "CloudCoverage": 1.2,
+    "CloudSpeed": 1,
+    "Fog": 2,
+    "CloudShadowEnable": true,
+    "WeatherPreset": "Clear_Skies",
+    "WindDirection":150,
+    "NightBrightness": 0.5,
+    "Dust": 0.1,
+    "starts_intensity": 0.4
+}
