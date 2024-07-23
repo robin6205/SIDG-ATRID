@@ -1,3 +1,12 @@
+###################################################
+# camera_calibration.py
+# Developer: Joshua Chang
+# Date: 5/20/2024
+# Description: This script will take image captures from the 
+# simulation camera and output the camera calibration data including 
+# camera matrix and distortion coefficients
+##################################################
+
 import cv2
 import numpy as np
 import glob
