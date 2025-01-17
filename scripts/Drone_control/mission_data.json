@@ -1,0 +1,20 @@
+{
+  "waypoints": [
+    {
+      "number": 1,
+      "latitude": 40.41356852476668,
+      "longitude": -86.93420987186335
+    },
+    {
+      "number": 2,
+      "latitude": 40.41494903319362,
+      "longitude": -86.93219285068415
+    },
+    {
+      "number": 3,
+      "latitude": 40.416198818170145,
+      "longitude": -86.93168859538935
+    }
+  ],
+  "cameras": []
+}

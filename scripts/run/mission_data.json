@@ -1,0 +1,39 @@
+{
+  "drones": [
+    {
+      "name": "Drone 1",
+      "type": "DJI Mini 2",
+      "waypoints": [
+        {
+          "number": 1,
+          "latitude": 40.41320540540035,
+          "longitude": -86.95092016213594,
+          "altitude": 30,
+          "speed": null
+        },
+        {
+          "number": 2,
+          "latitude": 40.41158796023678,
+          "longitude": -86.9359641646689,
+          "altitude": 30,
+          "speed": 5
+        },
+        {
+          "number": 3,
+          "latitude": 40.41264992356565,
+          "longitude": -86.9303637122458,
+          "altitude": 30,
+          "speed": 5
+        },
+        {
+          "number": 4,
+          "latitude": 40.40756868575098,
+          "longitude": -86.92753129952608,
+          "altitude": 30,
+          "speed": 5
+        }
+      ]
+    }
+  ],
+  "cameras": []
+}
