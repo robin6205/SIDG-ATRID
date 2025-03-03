@@ -1,0 +1,88 @@
+{
+    "drone_config": {
+        "coordinate_system": "xyz",
+        "mission_file": "C:\\Users\\Josh\\Desktop\\PhD\\Research\\SiDG-ATRID\\git\\SIDG-ATRID\\scripts\\Drone_control\\xy_coord_data\\mission_data2.json"
+    },
+    "camera_config": {
+        "camera1": {
+            "location": {
+                "x": 721.974362,
+                "y": -2588.667223,
+                "z": -2038.730176
+            },
+            "rotation": {
+                "pitch": 39.983780,
+                "yaw": 78.399438,
+                "roll": 0.000000
+            }
+        },
+        "camera2": {
+            "location": {
+                "x": 2476.652598,
+                "y": -3633.055051,
+                "z": -2031.722906
+            },
+            "rotation": {
+                "pitch": 32.186909,
+                "yaw": 120.806319,
+                "roll": -0.000000
+            }
+        },
+        "camera3": {
+            "location": {
+                "x": -4221.984936,
+                "y": -1306.893829,
+                "z": -810.568833
+            },
+            "rotation": {
+                "pitch": 37.783375,
+                "yaw": 10.800136,
+                "roll": -0.000000
+            }
+        },
+        "camera4": {
+            "location": {
+                "x": -125.063321,
+                "y": -5829.064497,
+                "z": -672.288157
+            },
+            "rotation": {
+                "pitch": 18.383518,
+                "yaw": 87.400001,
+                "roll": -0.000000
+            }
+        },
+        "camera5": {
+            "location": {
+                "x": 10957.692741,
+                "y": 3220.664874,
+                "z": -901.808888
+            },
+            "rotation": {
+                "pitch": 25.783216,
+                "yaw": -63.599707,
+                "roll": 0.000000
+            }
+        },
+        "camera6": {
+            "location": {
+                "x": 9090.478020,
+                "y": 1671.611866,
+                "z": 4274.938000
+            },
+            "rotation": {
+                "pitch": -66.616785,
+                "yaw": -26.799701,
+                "roll": 0.000000
+            }
+        }
+    },
+    "data_collection": {
+        "base_output_dir": "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-v5/DJI_S900",
+        "weather_condition": "city-sunny-cam3",
+        "frame_rate": 10,
+        "capture_duration": 100000,
+        "max_images": 120,
+        "check_exclusive_mask_color": true
+    }
+} 
