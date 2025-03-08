@@ -1,7 +1,8 @@
 {
     "drone_config": {
         "coordinate_system": "xyz",
-        "mission_file": "C:\\Users\\Josh\\Desktop\\PhD\\Research\\SiDG-ATRID\\git\\SIDG-ATRID\\scripts\\Drone_control\\xy_coord_data\\mission_data2.json"
+        "mission_file": "C:\\Users\\Josh\\Desktop\\PhD\\Research\\SiDG-ATRID\\git\\SIDG-ATRID\\scripts\\Drone_control\\xy_coord_data\\mission_data2.json",
+        "drone_type": "DJIS900"
     },
     "camera_config": {
         "camera1": {
@@ -54,35 +55,36 @@
         },
         "camera5": {
             "location": {
-                "x": 10957.692741,
-                "y": 3220.664874,
-                "z": -901.808888
+                "x": -2771.069308,
+                "y": 3224.187595,
+                "z": -256.492194
             },
             "rotation": {
-                "pitch": 25.783216,
-                "yaw": -63.599707,
+                "pitch": 24.183216,
+                "yaw": -45.799701,
                 "roll": 0.000000
             }
         },
         "camera6": {
             "location": {
-                "x": 9090.478020,
-                "y": 1671.611866,
-                "z": 4274.938000
+                "x": -2983.227993,
+                "y": 2489.607430,
+                "z": 3981.223325
             },
             "rotation": {
-                "pitch": -66.616785,
-                "yaw": -26.799701,
+                "pitch": -52.216785,
+                "yaw": -35.599701,
                 "roll": 0.000000
             }
         }
     },
     "data_collection": {
-        "base_output_dir": "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-v5/DJI_S900",
-        "weather_condition": "city-sunny-cam3",
+        "base_output_dir": "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-v5/DJIMini2",
+        "weather_condition": "park2-sunny-cam2",
         "frame_rate": 10,
         "capture_duration": 100000,
         "max_images": 120,
+        "image_count_consistency": true,
         "check_exclusive_mask_color": true
     }
 } 

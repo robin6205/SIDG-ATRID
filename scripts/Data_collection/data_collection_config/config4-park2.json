@@ -1,0 +1,102 @@
+{
+    "drone_config": {
+        "coordinate_system": "xyz",
+        "mission_file": "C:\\Users\\Josh\\Desktop\\PhD\\Research\\SiDG-ATRID\\git\\SIDG-ATRID\\scripts\\Drone_control\\xy_coord_data\\mission_data2.json",
+        "drone_type": "DJIMatrice"
+    },
+    "camera_config": {
+        "camera1": {
+            "location": {
+                "x": -2009.780965,
+                "y": 508.068645,
+                "z": -325.233992
+            },
+            "rotation": {
+                "pitch": 36.383519,
+                "yaw": -16.400006,
+                "roll": 0.000000
+            }
+        },
+        "camera2": {
+            "location": {
+                "x": -730.151219,
+                "y": 3598.144698,
+                "z": -364.046343
+            },
+            "rotation": {
+                "pitch": 27.583519,
+                "yaw": -76.600007,
+                "roll": 0.000000
+            }
+        },
+        "camera3": {
+            "location": {
+                "x": 1532.807000,
+                "y": 1625.401743,
+                "z": 3468.776213
+            },
+            "rotation": {
+                "pitch": -48.216482,
+                "yaw": -142.400007,
+                "roll": 0.000000
+            }
+        },
+        "camera4": {
+            "location": {
+                "x": 3164.140791,
+                "y": 1007.535708,
+                "z": 644.438662
+            },
+            "rotation": {
+                "pitch": -10.616481,
+                "yaw": -169.200008,
+                "roll": 0.000000
+            }
+        },
+        "camera5": {
+            "location": {
+                "x": 3648.539687,
+                "y": -1737.999284,
+                "z": 40.191526
+            },
+            "rotation": {
+                "pitch": 16.783519,
+                "yaw": 155.399992,
+                "roll": -0.000000
+            }
+        },
+        "camera6": {
+            "location": {
+                "x": 2595.883967,
+                "y": -4161.598201,
+                "z": -121.529321
+            },
+            "rotation": {
+                "pitch": 13.783519,
+                "yaw": 116.199991,
+                "roll": 0.000000
+            }
+        },
+        "camera7": {
+            "location": {
+                "x": 2086.190787,
+                "y": 452.574148,
+                "z": 8217.776166
+            },
+            "rotation": {
+                "pitch": -68.416482,
+                "yaw": 168.199986,
+                "roll": -0.000000
+            }
+        }
+    },
+    "data_collection": {
+        "base_output_dir": "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-v5",
+        "location": "park",
+        "weather_condition": "park2-sunny-cam3",
+        "frame_rate": 10,
+        "capture_duration": 100000,
+        "max_images": 120,
+        "check_exclusive_mask_color": true
+    }
+} 

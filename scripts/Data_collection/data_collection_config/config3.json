@@ -1,0 +1,89 @@
+{
+    "drone_config": {
+        "coordinate_system": "xyz",
+        "mission_file": "C:\\Users\\Josh\\Desktop\\PhD\\Research\\SiDG-ATRID\\git\\SIDG-ATRID\\scripts\\Drone_control\\xy_coord_data\\mission_data2.json",
+        "drone_type": "DJIMini2"
+    },
+    "camera_config": {
+        "camera1": {
+            "location": {
+                "x": 1241.136140,
+                "y": -2059.685386,
+                "z": -117.549389
+            },
+            "rotation": {
+                "pitch": 20.583216,
+                "yaw": 110.800301,
+                "roll": 0.000000
+            }
+        },
+        "camera2": {
+            "location": {
+                "x": -3229.270974,
+                "y": 133.170947,
+                "z": -84.708200
+            },
+            "rotation": {
+                "pitch": 22.183216,
+                "yaw": 11.400300,
+                "roll": 0.000000
+            }
+        },
+        "camera3": {
+            "location": {
+                "x": -1086.466492,
+                "y": 2745.797121,
+                "z": -18.406548
+            },
+            "rotation": {
+                "pitch": 10.183216,
+                "yaw": -54.199701,
+                "roll": 0.000000
+            }
+        },
+        "camera4": {
+            "location": {
+                "x": 977.718526,
+                "y": 3352.897017,
+                "z": -49.582539
+            },
+            "rotation": {
+                "pitch": 6.583216,
+                "yaw": -101.399702,
+                "roll": -0.000000
+            }
+        },
+        "camera5": {
+            "location": {
+                "x": 3048.363640,
+                "y": 1899.212594,
+                "z": -47.245979
+            },
+            "rotation": {
+                "pitch": 7.583216,
+                "yaw": -146.799703,
+                "roll": 0.000000
+            }
+        },
+        "camera6": {
+            "location": {
+                "x": 3990.441397,
+                "y": 513.828640,
+                "z": -112.901986
+            },
+            "rotation": {
+                "pitch": 23.983216,
+                "yaw": -179.799703,
+                "roll": 0.000000
+            }
+        }
+    },
+    "data_collection": {
+        "base_output_dir": "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-v5/DJIMini2/city",
+        "weather_condition": "city3-sunny-cam3",
+        "frame_rate": 10,
+        "capture_duration": 100000,
+        "max_images": 120,
+        "check_exclusive_mask_color": true
+    }
+} 
