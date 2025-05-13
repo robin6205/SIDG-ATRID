@@ -5,9 +5,11 @@ import sys
 import os
 import re
 import argparse
+import subprocess
+import shutil
 from datetime import datetime
 from unrealcv import Client
-from airsim import MultirotorClient, Vector3r
+from airsim import MultirotorClient, Vector3r, DrivetrainType, YawMode
 import threading
 import queue
 
@@ -47,8 +49,13 @@ class FullDataCollection:
         if "cameras" in self.config:
             # The cameras in the new format are in a list with a single dictionary, extract it
             if isinstance(self.config["cameras"], list) and len(self.config["cameras"]) > 0:
+                # Create a merged dictionary from all camera dictionaries in the list
+                # self.camera_config = {}
+                # for camera_dict in self.config["cameras"]:
+                #     self.camera_config.update(camera_dict)
                 # Extract the first (and usually only) cameras dictionary
                 self.camera_config = self.config["cameras"][0]
+
                 print(f"Using cameras from new format. Found {len(self.camera_config)} cameras.")
             else:
                 print("Warning: 'cameras' list was empty or not a list. Using empty camera config.")
@@ -152,6 +159,9 @@ class FullDataCollection:
             )
             
             print(f"Created directory for {camera_id}: {camera_weather_dir}")
+        
+        # Run postprocess_weatherconfig.py and copy the formatted_ultra_dynamic_sky.json to each camera directory
+        self._run_postprocess_and_copy_weather_config()
 
         # Get starting frame index
         self.frame_index = self._get_max_frame_index()
@@ -159,6 +169,124 @@ class FullDataCollection:
         
         # Register signal handler
         signal.signal(signal.SIGINT, self._signal_handler)
+
+    def _run_postprocess_and_copy_weather_config(self):
+        """Run postprocess_weatherconfig.py and copy the formatted_ultra_dynamic_sky.json to each camera directory"""
+        print("\n=== Processing and copying weather configuration ===")
+        
+        # Path to the postprocess_weatherconfig.py script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        postprocess_script_path = os.path.join(script_dir, "WeatherConfig", "postprocess_weatherconfig.py")
+        
+        # Target formatted JSON file path
+        formatted_json_path = os.path.join(script_dir, "WeatherConfig", "formatted_ultra_dynamic_sky.json")
+        
+        # Check if files exist
+        if not os.path.exists(postprocess_script_path):
+            print(f"Warning: Weather config script not found at {postprocess_script_path}")
+            return
+            
+        # Run the postprocess_weatherconfig.py script
+        try:
+            print(f"Running weather config processing script: {postprocess_script_path}")
+            subprocess.run([sys.executable, postprocess_script_path], check=True)
+            print("Weather config processing completed successfully")
+            
+            # Check if the formatted JSON file was created
+            if not os.path.exists(formatted_json_path):
+                print(f"Warning: Formatted weather config not found at {formatted_json_path}")
+                return
+                
+            # Copy the formatted JSON to each camera directory
+            for camera_id, dirs in self.camera_dirs.items():
+                target_path = os.path.join(dirs['weather_dir'], "formatted_ultra_dynamic_sky.json")
+                shutil.copy2(formatted_json_path, target_path)
+                print(f"Copied weather config to {camera_id} directory: {target_path}")
+                
+                # Create camera_config.json file with resolution and FOV information
+                self._create_camera_config_json(camera_id, dirs['weather_dir'])
+                
+            print("Weather configuration copied to all camera directories")
+        except Exception as e:
+            print(f"Error during weather config processing/copying: {e}")
+            
+        print("=== Weather configuration processing complete ===\n")
+        
+    def _create_camera_config_json(self, camera_id, target_dir):
+        """
+        Create a camera_config.json file with resolution and FOV information from unrealcv.ini
+        
+        Args:
+            camera_id (str): The camera ID (e.g., 'camera1')
+            target_dir (str): The directory to save the camera_config.json file
+        """
+        try:
+            print(f"Creating camera_config.json for {camera_id}...")
+            
+            # Try to read from unrealcv.ini file first
+            unrealcv_ini_path = "D:/Program Files/Epic Games/UE_5.4/Engine/Binaries/Win64/unrealcv.ini"
+            
+            # Initialize with default values
+            width = 1920
+            height = 1080
+            fov = 90
+            
+            # Try to read from unrealcv.ini if it exists
+            if os.path.exists(unrealcv_ini_path):
+                print(f"Reading configuration from {unrealcv_ini_path}")
+                with open(unrealcv_ini_path, 'r') as ini_file:
+                    ini_content = ini_file.read()
+                    
+                    # Parse width
+                    width_match = re.search(r'Width=(\d+)', ini_content)
+                    if width_match:
+                        width = int(width_match.group(1))
+                    
+                    # Parse height
+                    height_match = re.search(r'Height=(\d+)', ini_content)
+                    if height_match:
+                        height = int(height_match.group(1))
+                    
+                    # Parse FOV
+                    fov_match = re.search(r'FOV=(\d+)', ini_content)
+                    if fov_match:
+                        fov = int(fov_match.group(1))
+            else:
+                print(f"Warning: unrealcv.ini not found at {unrealcv_ini_path}")
+                print("Using default values: 1920x1080, FOV=90")
+                
+                # Try to get values from camera config if available
+                if camera_id in self.camera_config:
+                    camera_data = self.camera_config[camera_id]
+                    
+                    # Check if specs/resolution exists
+                    if "specs" in camera_data and "resolution" in camera_data["specs"]:
+                        width = camera_data["specs"]["resolution"]["width"]
+                        height = camera_data["specs"]["resolution"]["height"]
+                        print(f"Using resolution from camera config: {width}x{height}")
+                    
+                    # Check if specs/fov exists
+                    if "specs" in camera_data and "fov" in camera_data["specs"]:
+                        fov = camera_data["specs"]["fov"]
+                        print(f"Using FOV from camera config: {fov}")
+            
+            # Create camera config JSON structure
+            camera_config_data = {
+                "resolution": {
+                    "width": width,
+                    "height": height
+                },
+                "fov_deg": fov
+            }
+            
+            # Save to JSON file
+            camera_config_path = os.path.join(target_dir, "camera_config.json")
+            with open(camera_config_path, 'w') as f:
+                json.dump(camera_config_data, f, indent=2)
+                
+            print(f"Created camera_config.json for {camera_id} at {camera_config_path}")
+        except Exception as e:
+            print(f"Error creating camera_config.json for {camera_id}: {e}")
 
     def _signal_handler(self, sig, frame):
         """Handle interrupt signal for immediate shutdown"""
@@ -575,6 +703,17 @@ class FullDataCollection:
                 velocity=velocity
             )
             
+            # move_task = self.airsim_client.moveToPositionAsync(
+            #     x=target_ned.x_val,
+            #     y=target_ned.y_val,
+            #     z=target_ned.z_val -30,
+            #     velocity=15,
+            #     drivetrain=DrivetrainType.MaxDegreeOfFreedom,
+            #     lookahead=-1,
+            #     adaptive_lookahead=True
+            # )
+
+            
             print(f"Waiting for movement to complete...")
             move_task.join() 
             
@@ -874,7 +1013,7 @@ class FullDataCollection:
             # Note: _move_to_waypoint now includes the .join()
             
             print(f"Arrived at waypoint {waypoint['number']}. Waiting 3 seconds...")
-            time.sleep(3) 
+            time.sleep(1) 
             
             # --- Pause, Capture, Resume --- 
             print(f"Pausing simulation for image capture ({camera_id}, Frame: {self.frame_index})...")
@@ -1589,7 +1728,7 @@ if __name__ == "__main__":
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Run data collection from Unreal Engine')
-    parser.add_argument('--config', type=str, default="scripts/Data_collection/data_collection_config/generated_mission_data.json",
+    parser.add_argument('--config', type=str, default="scripts/Data_collection/data_collection_config/generated_mission_data_debug.json",
                         help='Path to the configuration file')
     parser.add_argument('--state', action='store_true', 
                         help='Enable state saving to JSON files')
