@@ -47,18 +47,17 @@ class FullDataCollection:
         
         # Extract cameras from newer format if present
         if "cameras" in self.config:
-            # The cameras in the new format are in a list with a single dictionary, extract it
-            if isinstance(self.config["cameras"], list) and len(self.config["cameras"]) > 0:
-                # Create a merged dictionary from all camera dictionaries in the list
-                # self.camera_config = {}
-                # for camera_dict in self.config["cameras"]:
-                #     self.camera_config.update(camera_dict)
-                # Extract the first (and usually only) cameras dictionary
-                self.camera_config = self.config["cameras"][0]
-
-                print(f"Using cameras from new format. Found {len(self.camera_config)} cameras.")
+            # The cameras in the new format are in a list with objects, merge them
+            if isinstance(self.config["cameras"], list):
+                self.camera_config = {}
+                for camera_obj in self.config["cameras"]:
+                    # Each object in the list is a dict with a single camera
+                    for camera_id, camera_data in camera_obj.items():
+                        self.camera_config[camera_id] = camera_data
+                
+                print(f"Using cameras from new list format. Found {len(self.camera_config)} cameras.")
             else:
-                print("Warning: 'cameras' list was empty or not a list. Using empty camera config.")
+                print("Warning: 'cameras' was not a list. Using empty camera config.")
                 self.camera_config = {}
         elif "camera_config" in self.config:
             # Fallback to old format if present
@@ -74,8 +73,11 @@ class FullDataCollection:
             # Extract cameras from mission section if not already extracted
             if "cameras" in self.config["mission"] and not self.camera_config:
                 # Similar extraction logic as above
-                if isinstance(self.config["mission"]["cameras"], list) and len(self.config["mission"]["cameras"]) > 0:
-                    self.camera_config = self.config["mission"]["cameras"][0]
+                if isinstance(self.config["mission"]["cameras"], list):
+                    self.camera_config = {}
+                    for camera_obj in self.config["mission"]["cameras"]:
+                        for camera_id, camera_data in camera_obj.items():
+                            self.camera_config[camera_id] = camera_data
                     print(f"Using cameras from mission wrapper. Found {len(self.camera_config)} cameras.")
             
             # Move mission data to top level for compatibility
@@ -214,7 +216,8 @@ class FullDataCollection:
         
     def _create_camera_config_json(self, camera_id, target_dir):
         """
-        Create a camera_config.json file with resolution and FOV information from unrealcv.ini
+        Create a camera_config.json file with resolution, FOV, position and orientation information
+        from the camera config.
         
         Args:
             camera_id (str): The camera ID (e.g., 'camera1')
@@ -223,60 +226,86 @@ class FullDataCollection:
         try:
             print(f"Creating camera_config.json for {camera_id}...")
             
-            # Try to read from unrealcv.ini file first
-            unrealcv_ini_path = "D:/Program Files/Epic Games/UE_5.4/Engine/Binaries/Win64/unrealcv.ini"
-            
             # Initialize with default values
             width = 1920
             height = 1080
             fov = 90
+            position = {"x": 0, "y": 0, "z": 0}
+            orientation = {"pitch": 0, "yaw": 0, "roll": 0}
             
-            # Try to read from unrealcv.ini if it exists
-            if os.path.exists(unrealcv_ini_path):
-                print(f"Reading configuration from {unrealcv_ini_path}")
-                with open(unrealcv_ini_path, 'r') as ini_file:
-                    ini_content = ini_file.read()
-                    
-                    # Parse width
-                    width_match = re.search(r'Width=(\d+)', ini_content)
-                    if width_match:
-                        width = int(width_match.group(1))
-                    
-                    # Parse height
-                    height_match = re.search(r'Height=(\d+)', ini_content)
-                    if height_match:
-                        height = int(height_match.group(1))
-                    
-                    # Parse FOV
-                    fov_match = re.search(r'FOV=(\d+)', ini_content)
-                    if fov_match:
-                        fov = int(fov_match.group(1))
-            else:
-                print(f"Warning: unrealcv.ini not found at {unrealcv_ini_path}")
-                print("Using default values: 1920x1080, FOV=90")
+            # Try to get values from camera config
+            if camera_id in self.camera_config:
+                camera_data = self.camera_config[camera_id]
                 
-                # Try to get values from camera config if available
-                if camera_id in self.camera_config:
-                    camera_data = self.camera_config[camera_id]
-                    
-                    # Check if specs/resolution exists
-                    if "specs" in camera_data and "resolution" in camera_data["specs"]:
-                        width = camera_data["specs"]["resolution"]["width"]
-                        height = camera_data["specs"]["resolution"]["height"]
-                        print(f"Using resolution from camera config: {width}x{height}")
-                    
-                    # Check if specs/fov exists
-                    if "specs" in camera_data and "fov" in camera_data["specs"]:
-                        fov = camera_data["specs"]["fov"]
-                        print(f"Using FOV from camera config: {fov}")
+                # Check if specs/resolution exists
+                if "specs" in camera_data and "resolution" in camera_data["specs"]:
+                    width = camera_data["specs"]["resolution"]["width"]
+                    height = camera_data["specs"]["resolution"]["height"]
+                    print(f"Using resolution from camera config: {width}x{height}")
+                # Also check direct resolution key
+                elif "resolution" in camera_data:
+                    width = camera_data["resolution"]["width"]
+                    height = camera_data["resolution"]["height"]
+                    print(f"Using resolution from camera config: {width}x{height}")
+                
+                # Check if specs/fov exists
+                if "specs" in camera_data and "fov" in camera_data["specs"]:
+                    fov = camera_data["specs"]["fov"]
+                    print(f"Using FOV from camera config: {fov}")
+                # Also check direct fov key
+                elif "fov" in camera_data:
+                    fov = camera_data["fov"]
+                    print(f"Using FOV from camera config: {fov}")
+                
+                # Get position (check both 'position' and 'location' keys)
+                if "position" in camera_data:
+                    position = camera_data["position"]
+                    print(f"Using position from camera config: {position}")
+                elif "location" in camera_data:
+                    position = camera_data["location"]
+                    print(f"Using location from camera config: {position}")
+                
+                # Get orientation (check both 'orientation' and 'rotation' keys)
+                if "orientation" in camera_data:
+                    orientation = camera_data["orientation"]
+                    print(f"Using orientation from camera config: {orientation}")
+                elif "rotation" in camera_data:
+                    orientation = camera_data["rotation"]
+                    print(f"Using rotation from camera config: {orientation}")
+            else:
+                print(f"Warning: {camera_id} not found in camera config, using default values: 1920x1080, FOV=90")
+                
+                # Only as a fallback, try to read from unrealcv.ini if it exists
+                unrealcv_ini_path = "D:/Program Files/Epic Games/UE_5.4/Engine/Binaries/Win64/unrealcv.ini"
+                if os.path.exists(unrealcv_ini_path):
+                    print(f"Reading configuration from {unrealcv_ini_path}")
+                    with open(unrealcv_ini_path, 'r') as ini_file:
+                        ini_content = ini_file.read()
+                        
+                        # Parse width
+                        width_match = re.search(r'Width=(\d+)', ini_content)
+                        if width_match:
+                            width = int(width_match.group(1))
+                        
+                        # Parse height
+                        height_match = re.search(r'Height=(\d+)', ini_content)
+                        if height_match:
+                            height = int(height_match.group(1))
+                        
+                        # Parse FOV
+                        fov_match = re.search(r'FOV=(\d+)', ini_content)
+                        if fov_match:
+                            fov = int(fov_match.group(1))
             
-            # Create camera config JSON structure
+            # Create camera config JSON structure with all information
             camera_config_data = {
                 "resolution": {
                     "width": width,
                     "height": height
                 },
-                "fov_deg": fov
+                "fov_deg": fov,
+                "position": position,
+                "orientation": orientation
             }
             
             # Save to JSON file
@@ -438,14 +467,33 @@ class FullDataCollection:
                     f'vset /camera/{camera_num}/size {resolution["width"]} {resolution["height"]}'
                 )
             
-            # Set camera FOV if specified in config
+            # Set camera FOV if specified in config using the new method
             if fov:
-                self.unrealcv_client.request(
-                    f'vset /camera/{camera_num}/fov {fov}'
-                )
+                # Use the new set_cam_fov method
+                self.set_cam_fov(camera_num, fov)
                 
             print(f"{camera_id} set to location {location}, rotation {rotation}, "
                   f"resolution {resolution}, FOV {fov}")
+
+    def set_cam_fov(self, cam_id, fov):
+        """
+        Set the camera field of view (fov).
+
+        Parameters:
+            cam_id (int): The camera ID.
+            fov (float): The field of view in degrees.
+        
+        Example:
+            set_cam_fov(0, 90)  # Set the fov of camera 0 to 90 degrees
+        """
+        try:
+            print(f"Setting camera {cam_id} FOV to {fov} degrees")
+            result = self.unrealcv_client.request(f'vset /camera/{cam_id}/fov {fov}')
+            print(f"  Result: {result}")
+            return result
+        except Exception as e:
+            print(f"Error setting FOV for camera {cam_id}: {e}")
+            return None
 
     def _pause_simulation(self):
         """Pause the simulation if running"""
@@ -911,12 +959,10 @@ class FullDataCollection:
             print(f"Resolution command: {resolution_cmd}")
             print(f"Resolution result: {resolution_result}")
         
-        # Set camera FOV if specified in config
+        # Set camera FOV if specified in config using the new method
         if fov:
-            fov_cmd = f'vset /camera/{camera_num}/fov {fov}'
-            fov_result = self.unrealcv_client.request(fov_cmd)
-            print(f"FOV command: {fov_cmd}")
-            print(f"FOV result: {fov_result}")
+            # Use the new set_cam_fov method
+            self.set_cam_fov(camera_num, fov)
         
         # Debug: Check available cameras after setup
         camera_list_after = self.unrealcv_client.request('vget /cameras')
@@ -1455,6 +1501,44 @@ class FullDataCollection:
             if self.save_state:
                 print(f"    State: {self.camera_dirs[camera_id]['state']}")
 
+    def _extract_camera_fov(self, camera_config):
+        """
+        Extract camera FOV from various possible locations in camera config.
+        
+        Parameters:
+            camera_config (dict): The camera configuration dictionary
+            
+        Returns:
+            float or None: The camera FOV in degrees or None if not specified
+        """
+        # Check various possible locations for FOV settings
+        if "fov" in camera_config:
+            return float(camera_config["fov"])
+        elif "specs" in camera_config and "fov" in camera_config["specs"]:
+            return float(camera_config["specs"]["fov"])
+        # Check if we have a default FOV in the main config
+        elif "default_fov" in self.config.get("data_collection", {}):
+            return float(self.config["data_collection"]["default_fov"])
+        return None
+        
+    def _setup_cameras_with_fov(self):
+        """Set up all cameras with the FOV values from the config file"""
+        print("\n=== Setting up all cameras with specified FOVs ===")
+        for camera_id, camera_config in self.camera_config.items():
+            try:
+                camera_num = int(camera_id.replace('camera', ''))
+                # Extract FOV value
+                fov = self._extract_camera_fov(camera_config)
+                
+                if fov is not None:
+                    self.set_cam_fov(camera_num, fov)
+                    print(f"Set {camera_id} FOV to {fov} degrees")
+                else:
+                    print(f"No FOV specified for {camera_id}, using default")
+            except Exception as e:
+                print(f"Error setting up FOV for {camera_id}: {e}")
+        print("=== Camera FOV setup complete ===\n")
+
     def run(self):
         """
         Run the data collection process based on the selected mode:
@@ -1464,6 +1548,9 @@ class FullDataCollection:
         try:
             # Set up initial agent colors (only needs to be done once)
             self._setup_camera()
+            
+            # Setup all cameras with the FOV values from the config file
+            self._setup_cameras_with_fov()
             
             if self.parallel_mode:
                 # --- PARALLEL MODE ---
@@ -1728,7 +1815,7 @@ if __name__ == "__main__":
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Run data collection from Unreal Engine')
-    parser.add_argument('--config', type=str, default="scripts/Data_collection/data_collection_config/generated_mission_data_debug.json",
+    parser.add_argument('--config', type=str, default="scripts\Data_collection\data_collection_config\config8-brushify-lake.json",
                         help='Path to the configuration file')
     parser.add_argument('--state', action='store_true', 
                         help='Enable state saving to JSON files')

@@ -9,11 +9,12 @@ import os       # Added for os.path.exists
 # --- Argument Parser ---
 parser = argparse.ArgumentParser(description="Generate waypoints and visualize sensor FOV, optionally highlighting detected waypoints.")
 parser.add_argument('--detection', action='store_true', help='Enable loading detection data and highlighting detected waypoints.')
+parser.add_argument('--count', action='store_true', help='Display waypoint numbers on each point.')
 args = parser.parse_args()
 
 # --- Configuration ---
 z = 260  # fixed Z-coordinate for grid
-grid_spacing = 1800  # distance between grid points
+grid_spacing = 2200  # distance between grid points (balanced for ~30 rows, 3 columns)
 
 # Camera Parameters
 cameras = {
@@ -107,18 +108,50 @@ inter_x2 = min(vertical_x2, horizontal_x2)
 inter_y1 = max(vertical_y1, horizontal_y1)
 inter_y2 = min(vertical_y2, horizontal_y2)
 
-# Step 1: Generate full grid over the bounding box
-x_min = min(vertical_x1, horizontal_x1)
-x_max = max(vertical_x2, horizontal_x2)
-y_min = min(vertical_y1, horizontal_y1)
-y_max = max(vertical_y2, horizontal_y2)
+# Step 1: Generate centered grids for each street separately
 
-x_vals = np.arange(x_min, x_max + grid_spacing, grid_spacing)
-y_vals = np.arange(y_min, y_max + grid_spacing, grid_spacing)
-xx, yy = np.meshgrid(x_vals, y_vals)
-all_points = np.vstack((xx.ravel(), yy.ravel(), np.full_like(xx.ravel(), z))).T
+# Generate vertical street grid (centered)
+vertical_width = vertical_x2 - vertical_x1
+vertical_height = vertical_y2 - vertical_y1
+vertical_center_x = (vertical_x1 + vertical_x2) / 2
+vertical_center_y = (vertical_y1 + vertical_y2) / 2
 
-# Step 2: Filter points inside either street
+# Calculate number of points for vertical street
+vertical_cols = int(vertical_width / grid_spacing) + 1
+vertical_rows = int(vertical_height / grid_spacing) + 1
+
+# Generate centered grid for vertical street
+vertical_x_start = vertical_center_x - (vertical_cols - 1) * grid_spacing / 2
+vertical_y_start = vertical_center_y - (vertical_rows - 1) * grid_spacing / 2
+
+vertical_x_vals = np.array([vertical_x_start + i * grid_spacing for i in range(vertical_cols)])
+vertical_y_vals = np.array([vertical_y_start + i * grid_spacing for i in range(vertical_rows)])
+vertical_xx, vertical_yy = np.meshgrid(vertical_x_vals, vertical_y_vals)
+vertical_points = np.vstack((vertical_xx.ravel(), vertical_yy.ravel(), np.full_like(vertical_xx.ravel(), z))).T
+
+# Generate horizontal street grid (centered)
+horizontal_width = horizontal_x2 - horizontal_x1
+horizontal_height = horizontal_y2 - horizontal_y1
+horizontal_center_x = (horizontal_x1 + horizontal_x2) / 2
+horizontal_center_y = (horizontal_y1 + horizontal_y2) / 2
+
+# Calculate number of points for horizontal street
+horizontal_cols = int(horizontal_width / grid_spacing) + 1
+horizontal_rows = int(horizontal_height / grid_spacing) + 1
+
+# Generate centered grid for horizontal street
+horizontal_x_start = horizontal_center_x - (horizontal_cols - 1) * grid_spacing / 2
+horizontal_y_start = horizontal_center_y - (horizontal_rows - 1) * grid_spacing / 2
+
+horizontal_x_vals = np.array([horizontal_x_start + i * grid_spacing for i in range(horizontal_cols)])
+horizontal_y_vals = np.array([horizontal_y_start + i * grid_spacing for i in range(horizontal_rows)])
+horizontal_xx, horizontal_yy = np.meshgrid(horizontal_x_vals, horizontal_y_vals)
+horizontal_points = np.vstack((horizontal_xx.ravel(), horizontal_yy.ravel(), np.full_like(horizontal_xx.ravel(), z))).T
+
+# Step 2: Combine and filter points
+all_points = np.vstack((vertical_points, horizontal_points))
+
+# Filter points to ensure they're within street boundaries
 in_vertical = (
     (all_points[:, 0] >= vertical_x1) & (all_points[:, 0] <= vertical_x2) &
     (all_points[:, 1] >= vertical_y1) & (all_points[:, 1] <= vertical_y2)
@@ -132,70 +165,33 @@ is_valid = in_vertical | in_horizontal
 valid_points = all_points[is_valid]
 rejected_points = all_points[~is_valid]
 
-# Step 3: Center the grid within the road boundaries
-x_min_valid, x_max_valid = valid_points[:, 0].min(), valid_points[:, 0].max()
-y_min_valid, y_max_valid = valid_points[:, 1].min(), valid_points[:, 1].max()
-
-street_x_min = min(vertical_x1, horizontal_x1)
-street_x_max = max(vertical_x2, horizontal_x2)
-street_y_min = min(vertical_y1, horizontal_y1)
-street_y_max = max(vertical_y2, horizontal_y2)
-
-# Avoid division by zero if valid points range is zero
-x_range_valid = x_max_valid - x_min_valid
-y_range_valid = y_max_valid - y_min_valid
-
-x_offset = 0
-if x_range_valid > 1e-6: # Check if range is non-zero
-    x_offset = ((street_x_max - street_x_min) - x_range_valid) / 2 - (x_min_valid - street_x_min)
-
-y_offset = 0
-if y_range_valid > 1e-6: # Check if range is non-zero
-    y_offset = ((street_y_max - street_y_min) - y_range_valid) / 2 - (y_min_valid - street_y_min)
-
+# Step 3: Points are already centered, no additional shifting needed
 shifted_valid_points = valid_points.astype(np.float64)
-shifted_valid_points[:, 0] += x_offset
-shifted_valid_points[:, 1] += y_offset
 
 # Step 3b: Apply sorting logic before JSON export
 is_intersection = in_horizontal & in_vertical
 horizontal_mask = in_horizontal  # All horizontal points INCLUDING intersection
 vertical_only_mask = in_vertical & ~is_intersection  # Only vertical points NOT in intersection
 
-# Get original valid points belonging to each group
-orig_horizontal_points = all_points[is_valid][horizontal_mask[is_valid]]
-orig_vertical_only_points = all_points[is_valid][vertical_only_mask[is_valid]]
+# Get valid points belonging to each group (already centered)
+horizontal_points = shifted_valid_points[horizontal_mask[is_valid]]
+vertical_only_points = shifted_valid_points[vertical_only_mask[is_valid]]
 
-# Apply shift to horizontal points (including intersection)
-shifted_horizontal_points = orig_horizontal_points.astype(np.float64)
-shifted_horizontal_points[:, 0] += x_offset
-shifted_horizontal_points[:, 1] += y_offset
-
-# Apply shift to vertical-only points (excluding intersection)
-shifted_vertical_only_points = orig_vertical_only_points.astype(np.float64)
-shifted_vertical_only_points[:, 0] += x_offset
-shifted_vertical_only_points[:, 1] += y_offset
-
-# Calculate the center of the intersection (original coordinates)
-intersection_center_orig = np.array([(inter_x1 + inter_x2) / 2, (inter_y1 + inter_y2) / 2, z])
-
-# Shift the intersection center to be consistent with other points
-intersection_center_shifted = intersection_center_orig.copy()
-intersection_center_shifted[0] += x_offset
-intersection_center_shifted[1] += y_offset
+# Calculate the center of the intersection
+intersection_center = np.array([(inter_x1 + inter_x2) / 2, (inter_y1 + inter_y2) / 2, z])
 
 # Sort horizontal points: Y descending, then X descending
-if shifted_horizontal_points.shape[0] > 0:
-    sort_indices_h = np.lexsort((-shifted_horizontal_points[:, 0], -shifted_horizontal_points[:, 1]))
-    sorted_horizontal = shifted_horizontal_points[sort_indices_h]
+if horizontal_points.shape[0] > 0:
+    sort_indices_h = np.lexsort((-horizontal_points[:, 0], -horizontal_points[:, 1]))
+    sorted_horizontal = horizontal_points[sort_indices_h]
 else:
     sorted_horizontal = np.empty((0, 3))
 
 # Sort vertical-only points: Y descending (top to bottom)
-if shifted_vertical_only_points.shape[0] > 0:
+if vertical_only_points.shape[0] > 0:
     # Changed to column-sweep: X ascending, then Y descending
-    sort_indices_v = np.lexsort((-shifted_vertical_only_points[:, 1], shifted_vertical_only_points[:, 0]))
-    sorted_vertical = shifted_vertical_only_points[sort_indices_v]
+    sort_indices_v = np.lexsort((-vertical_only_points[:, 1], vertical_only_points[:, 0]))
+    sorted_vertical = vertical_only_points[sort_indices_v]
 else:
     sorted_vertical = np.empty((0, 3))
 
@@ -204,12 +200,12 @@ if len(sorted_horizontal) > 0 and len(sorted_vertical) > 0:
     # Now we include intersection points in the horizontal path,
     # then add a transition point at intersection center,
     # then proceed to vertical-only points
-    final_ordered_points = np.vstack((sorted_horizontal, [intersection_center_shifted], sorted_vertical))
+    final_ordered_points = np.vstack((sorted_horizontal, [intersection_center], sorted_vertical))
 elif len(sorted_horizontal) > 0:
-    # Consider if intersection_center_shifted should be appended if no vertical points
+    # Consider if intersection_center should be appended if no vertical points
     final_ordered_points = sorted_horizontal
 elif len(sorted_vertical) > 0:
-    # Consider if intersection_center_shifted should be prepended if no horizontal points
+    # Consider if intersection_center should be prepended if no horizontal points
     final_ordered_points = sorted_vertical
 else:
     final_ordered_points = np.empty((0, 3))
@@ -225,6 +221,13 @@ if args.detection:
     #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-clearday-cam4/urban-clearday-cam4_detection_summary.json"
     # ]
     
+    detection_files_paths = [
+        "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-city/yolo-test-results-v2/city-clearday-cam1/city-clearday-cam1_detection_summary.json",
+        "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-city/yolo-test-results-v2/city-clearday-cam2/city-clearday-cam2_detection_summary.json",
+        "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-city/yolo-test-results-v2/city-clearday-cam3/city-clearday-cam3_detection_summary.json",
+        "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-city/yolo-test-results-v2/city-clearday-cam4/city-clearday-cam4_detection_summary.json"
+    ]
+    
     # detection_files_paths = [
     #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-cloudy-cam1/urban-cloudy-cam1_detection_summary.json",
     #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-cloudy-cam2/urban-cloudy-cam2_detection_summary.json",
@@ -239,12 +242,19 @@ if args.detection:
     #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-foggy-cam4/urban-foggy-cam4_detection_summary.json"
     # ]
     
-    detection_files_paths = [
-        "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-rainy-cam1/urban-rainy-cam1_detection_summary.json",
-        "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-rainy-cam2/urban-rainy-cam2_detection_summary.json",
-        "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-rainy-cam3/urban-rainy-cam3_detection_summary.json",
-        "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-rainy-cam4/urban-rainy-cam4_detection_summary.json"
-    ]
+    # detection_files_paths = [
+    #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-rainy-cam1/urban-rainy-cam1_detection_summary.json",
+    #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-rainy-cam2/urban-rainy-cam2_detection_summary.json",
+    #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-rainy-cam3/urban-rainy-cam3_detection_summary.json",
+    #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-urban-processed/sensor-placement/urban-rainy-cam4/urban-rainy-cam4_detection_summary.json"
+    # ]
+
+    # detection_files_paths = [
+    #     "D:\SiDG-ATRID-Dataset\Train_set\sidg-atrid-dataset-city\yolo-test-results/city-clearday-cam1/city-clearday-cam1_detection_summary.json",
+    #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-city/yolo-test-results/city-clearday-cam2/city-clearday-cam2_detection_summary.json",
+    #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-city/yolo-test-results/city-clearday-cam3/city-clearday-cam3_detection_summary.json",
+    #     "D:/SiDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-city/yolo-test-results/city-clearday-cam4/city-clearday-cam4_detection_summary.json"
+    # ]
 
     for file_idx, file_path in enumerate(detection_files_paths):
         cam_id_for_log = f"camera{file_idx + 1}"
@@ -303,14 +313,12 @@ ax.scatter(shifted_valid_points[:, 0], shifted_valid_points[:, 1], c='blue', s=1
 # Highlight detected waypoints if detection mode is on
 if args.detection and detected_waypoint_indices:
     detected_label_added = False
-    # for idx in detected_waypoint_indices:
-    #     if idx < len(final_ordered_points): # Ensure index is valid for final_ordered_points
-    #         point = final_ordered_points[idx]
-    #         ax.scatter(point[0], point[1], c='red', s=20, 
-    #                    label='Detected Waypoint' if not detected_label_added else "", 
     for idx_from_file in detected_waypoint_indices: # idx_from_file is 0-based from the old system
-        target_idx_for_plot = -1  # Initialize to an invalid index
+        # Standard indexing - assuming file indices directly match final_ordered_points indices
+        target_idx_for_plot = idx_from_file
 
+        # LEGACY ADJUSTMENT - No longer needed now that waypoint generation is fixed
+        # Previously used to account for waypoint numbering differences between old and new system
         if idx_from_file < 113: # Old 0-indexed waypoints 0 through 112
             target_idx_for_plot = idx_from_file
         else: # Old 0-indexed waypoints 113 and onwards
@@ -325,10 +333,14 @@ if args.detection and detected_waypoint_indices:
         else:
             print(f"WARNING: Detected waypoint index {idx_from_file} (from file) mapped to target {target_idx_for_plot}, which is out of bounds for final_ordered_points (len: {len(final_ordered_points)}). This point will not be highlighted.")
 
+# Add number labels to points based on the final sorted order (if --count flag is set)
+if args.count:
+    for i, point in enumerate(final_ordered_points):
+        ax.text(point[0] + 200, point[1] + 200, str(i), fontsize=8, color='black', 
+                bbox=dict(facecolor='white', alpha=0.7, edgecolor='black', boxstyle='round,pad=0.2'))
 # Add number labels to points based on the final sorted order
-for i, point in enumerate(final_ordered_points):
-    ax.text(point[0] + 50, point[1] + 50, str(i + 1), fontsize=7, color='black')
-
+# for i, point in enumerate(final_ordered_points):
+#     ax.text(point[0] + 50, point[1] + 50, str(i + 1), fontsize=7, color='black')
 # Draw road rectangles
 ax.add_patch(patches.Rectangle((vertical_x1, vertical_y1), vertical_x2 - vertical_x1, vertical_y2 - vertical_y1,
                                edgecolor='green', facecolor='green', alpha=0.2, label='Vertical Street'))
@@ -337,7 +349,7 @@ ax.add_patch(patches.Rectangle((horizontal_x1, horizontal_y1), horizontal_x2 - h
 
 # Draw dashed intersection outline
 ax.add_patch(patches.Rectangle((inter_x1, inter_y1), inter_x2 - inter_x1, inter_y2 - inter_y1,
-                               edgecolor='purple', facecolor='none', linestyle='--', linewidth=2, label='Intersection'))
+                               edgecolor='purple', facecolor='none', linestyle='--', linewidth=2))
 
 # Add buildings (based on the purple outlines in the image)
 # Position buildings so their corners meet at the intersection
@@ -430,8 +442,7 @@ for cam_id, camera in cameras.items():
             closed=True,
             edgecolor=cone_color,
             facecolor=cone_color,
-            alpha=0.3,
-            label=f'Schematic FOV ({cam_id})'
+            alpha=0.3
         )
         ax.add_patch(fov_schematic_polygon)
         
@@ -441,7 +452,7 @@ for cam_id, camera in cameras.items():
         
         # Plot the two extended FOV edge lines with the specific color for this camera
         ax.plot([cam_xy[0], point_left_extended[0]], [cam_xy[1], point_left_extended[1]],
-                color=line_color, linestyle=':', linewidth=1.5, label=f'FOV Edge Lines ({cam_id})')
+                color=line_color, linestyle=':', linewidth=1.5, label=f'Field of View ({cam_id})')
         ax.plot([cam_xy[0], point_right_extended[0]], [cam_xy[1], point_right_extended[1]],
                 color=line_color, linestyle=':', linewidth=1.5)
         
@@ -460,7 +471,7 @@ for cam_id, camera in cameras.items():
               label=f'{cam_id} Location')
 
 # --- Final Plot Setup ---
-ax.set_title('Sensor Placement and grid points')
+ax.set_title('Sensor Placement in Urban Environment')
 ax.set_xlabel('X Coordinate')
 ax.set_ylabel('Y Coordinate')
 ax.axis('equal')
@@ -548,7 +559,7 @@ for cam_id, camera in cameras.items():
     }
     mission_data["cameras"].append(camera_entry)
 
-output_path = "scripts/Data_collection/data_collection_config/generated_mission_data_debug.json"
+output_path = "scripts/Data_collection/data_collection_config/generated_mission_data_debug_2.json"
 with open(output_path, 'w') as f:
     json.dump(mission_data, f, indent=2)
 
