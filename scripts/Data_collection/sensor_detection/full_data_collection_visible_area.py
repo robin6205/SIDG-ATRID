@@ -12,7 +12,33 @@ from unrealcv import Client
 from airsim import MultirotorClient, Vector3r, DrivetrainType, YawMode
 import threading
 import queue
+"""
+===============================================================================
+File Name   : full_data_collection_visible_area.py
+Description : Collects data from all cameras in a fixed configuration for a 
+              specified duration. Saves RGB, mask, and state images for each camera.
+              Also saves agent color information for each camera.
+Author      : Josh Chang <chang529@purdue.edu>
+Created On  : 2025-07-21
+Last Updated: 2025-07-21
+Version     : 1.2.0
 
+Usage       : python full_data_collection_visible_area.py
+Example     : python full_data_collection_visible_area.py --config_file "scripts/Data_collection/data_collection_config/generated_mission_data_debug_2.json" --save_state --visualize_line --parallel_mode
+
+Dependencies:
+    - Python >= 3.8
+    - random, itertools, json, os, argparse, subprocess, shutil, datetime, unrealcv, airsim, threading, queue
+
+Notes:
+    - Generates 100 unique scenarios from all possible combinations
+    - Each scenario includes camera configurations and environment conditions
+    - Camera quality gradient: 1 (best) to 4 (worst)
+    - Exposure levels range from -3 to 3
+    - Focal lengths range from 10 to 2000
+    - Outputs JSON files with scenario configurations
+===============================================================================
+"""
 # Conversion scale: Unreal Editor (cm) -> AirSim (m)
 SCALE = 0.01
 
