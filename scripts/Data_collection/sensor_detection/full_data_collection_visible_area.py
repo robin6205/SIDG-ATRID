@@ -9,9 +9,14 @@ import subprocess
 import shutil
 from datetime import datetime
 from unrealcv import Client
-from airsim import MultirotorClient, Vector3r, DrivetrainType, YawMode
+from airsim import MultirotorClient, Vector3r, DrivetrainType, YawMode, Quaternionr
 import threading
 import queue
+import numpy as np
+import math
+import cv2
+import glob  # Added for finding subset files
+from pathlib import Path  # Added for path handling
 """
 ===============================================================================
 File Name   : full_data_collection_visible_area.py
@@ -21,7 +26,7 @@ Description : Collects data from all cameras in a fixed configuration for a
 Author      : Josh Chang <chang529@purdue.edu>
 Created On  : 2025-07-21
 Last Updated: 2025-07-21
-Version     : 1.2.0
+Version     : 1.2.3
 
 Usage       : python full_data_collection_visible_area.py
 Example     : python full_data_collection_visible_area.py --config_file "scripts/Data_collection/data_collection_config/generated_mission_data_debug_2.json" --save_state --visualize_line --parallel_mode
@@ -58,7 +63,17 @@ def world_to_ned(target: Vector3r, origin: Vector3r):
     )
 
 class FullDataCollection:
-    def __init__(self, config_file, save_state=False, visualize_line=False, parallel_mode=False):
+    def __init__(self, config_file, save_state=False, visualize_line=False, parallel_mode=False, z_folder=None):
+        # Add z_folder parameter to store the z# folder path
+        self.z_folder = z_folder
+        self.subset_files = []
+        self.current_subset_index = 0
+        self.current_subset_config = None
+        
+        # Load subset files if z_folder is provided
+        if self.z_folder:
+            self._load_subset_files()
+        
         # Add parallel_mode parameter to store the mode
         self.parallel_mode = parallel_mode
         print(f"Operating in {'PARALLEL' if parallel_mode else 'SEQUENTIAL'} mode")
@@ -71,9 +86,14 @@ class FullDataCollection:
         with open(config_file, 'r') as f:
             self.config = json.load(f)
         
-        # Extract cameras from newer format if present
-        if "cameras" in self.config:
-            # The cameras in the new format are in a list with objects, merge them
+        # Extract cameras from config - prioritize camera_config for placement data
+        if "camera_config" in self.config:
+            # Use camera_config format which contains placement1-4 for subset mode
+            self.camera_config = self.config["camera_config"]
+            print(f"Using camera_config from config. Found {len(self.camera_config)} cameras.")
+            print(f"Camera config keys: {list(self.camera_config.keys())}")
+        elif "cameras" in self.config:
+            # Fallback to cameras format if present
             if isinstance(self.config["cameras"], list):
                 self.camera_config = {}
                 for camera_obj in self.config["cameras"]:
@@ -81,14 +101,10 @@ class FullDataCollection:
                     for camera_id, camera_data in camera_obj.items():
                         self.camera_config[camera_id] = camera_data
                 
-                print(f"Using cameras from new list format. Found {len(self.camera_config)} cameras.")
+                print(f"Using cameras from list format. Found {len(self.camera_config)} cameras.")
             else:
                 print("Warning: 'cameras' was not a list. Using empty camera config.")
                 self.camera_config = {}
-        elif "camera_config" in self.config:
-            # Fallback to old format if present
-            self.camera_config = self.config["camera_config"]
-            print(f"Using camera_config from old format. Found {len(self.camera_config)} cameras.")
         else:
             # If neither format is present, initialize with empty dict
             self.camera_config = {}
@@ -163,30 +179,42 @@ class FullDataCollection:
         
         # Create output directories for each camera
         self.camera_dirs = {}
-        for camera_id in self.camera_config.keys():
-            camera_num = int(camera_id.replace('camera', ''))
-            
-            # Find next available directory number
-            dir_num = self._get_next_available_camera_number(camera_num, existing_camera_dirs)
-            camera_weather_condition = f"{self.weather_base_pattern}{dir_num}"
-            existing_camera_dirs.add(dir_num)  # Add to set so next cameras won't use this number
-            
-            camera_weather_dir = os.path.join(self.base_output_dir, camera_weather_condition)
-            self.camera_dirs[camera_id] = {
-                'weather_dir': camera_weather_dir,
-                'rgb': os.path.join(camera_weather_dir, 'rgb'),
-                'mask': os.path.join(camera_weather_dir, 'mask'),
-                'state': os.path.join(camera_weather_dir, 'state') if self.save_state else None
-            }
-            os.makedirs(self.camera_dirs[camera_id]['rgb'], exist_ok=True)
-            os.makedirs(self.camera_dirs[camera_id]['mask'], exist_ok=True)
-            if self.save_state:
-                os.makedirs(self.camera_dirs[camera_id]['state'], exist_ok=True)
-            self.camera_dirs[camera_id]['agent_color_info'] = os.path.join(
-                camera_weather_dir, "agent_color_info.json"
-            )
-            
-            print(f"Created directory for {camera_id}: {camera_weather_dir}")
+        
+        # Only create traditional camera directories if NOT using subset mode
+        if not self.z_folder:
+            for camera_id in self.camera_config.keys():
+                camera_num = int(camera_id.replace('camera', ''))
+                
+                # Find next available directory number
+                dir_num = self._get_next_available_camera_number(camera_num, existing_camera_dirs)
+                camera_weather_condition = f"{self.weather_base_pattern}{dir_num}"
+                existing_camera_dirs.add(dir_num)  # Add to set so next cameras won't use this number
+                
+                camera_weather_dir = os.path.join(self.base_output_dir, camera_weather_condition)
+                self.camera_dirs[camera_id] = {
+                    'weather_dir': camera_weather_dir,
+                    'rgb': os.path.join(camera_weather_dir, 'rgb'),
+                    'mask': os.path.join(camera_weather_dir, 'mask'),
+                    'state': os.path.join(camera_weather_dir, 'state') if self.save_state else None
+                }
+                
+                # Create base directories
+                os.makedirs(self.camera_dirs[camera_id]['rgb'], exist_ok=True)
+                os.makedirs(self.camera_dirs[camera_id]['mask'], exist_ok=True)
+                if self.save_state:
+                    os.makedirs(self.camera_dirs[camera_id]['state'], exist_ok=True)
+                
+                self.camera_dirs[camera_id]['agent_color_info'] = os.path.join(
+                    camera_weather_dir, "agent_color_info.json"
+                )
+                
+                print(f"Created directory for {camera_id}: {camera_weather_dir}")
+        else:
+            print("Using subset mode - camera directories will be created per subset")
+        
+        # Load subset files if z_folder is provided
+        if self.z_folder:
+            self._load_subset_files()
         
         # Run postprocess_weatherconfig.py and copy the formatted_ultra_dynamic_sky.json to each camera directory
         self._run_postprocess_and_copy_weather_config()
@@ -197,6 +225,29 @@ class FullDataCollection:
         
         # Register signal handler
         signal.signal(signal.SIGINT, self._signal_handler)
+
+    def _load_subset_files(self):
+        """Load subset files from the z_folder"""
+        if self.z_folder:
+            try:
+                import glob
+                import re
+                subset_pattern = os.path.join(self.z_folder, 'subset_*.json')
+                subset_files = glob.glob(subset_pattern)
+                
+                # Sort numerically instead of alphabetically
+                def extract_number(filename):
+                    match = re.search(r'subset_(\d+)\.json', os.path.basename(filename))
+                    return int(match.group(1)) if match else 0
+                
+                self.subset_files = sorted(subset_files, key=extract_number)
+                print(f"Loaded {len(self.subset_files)} subset files from {self.z_folder}")
+                if self.subset_files:
+                    print(f"First few files: {[os.path.basename(f) for f in self.subset_files[:5]]}")
+            except Exception as e:
+                print(f"Error loading subset files: {e}")
+        else:
+            print("No z_folder specified, skipping subset file loading")
 
     def _run_postprocess_and_copy_weather_config(self):
         """Run postprocess_weatherconfig.py and copy the formatted_ultra_dynamic_sky.json to each camera directory"""
@@ -243,7 +294,7 @@ class FullDataCollection:
     def _create_camera_config_json(self, camera_id, target_dir):
         """
         Create a camera_config.json file with resolution, FOV, position and orientation information
-        from the camera config.
+        from the camera config. When using subset configurations, also includes exposure and focal length.
         
         Args:
             camera_id (str): The camera ID (e.g., 'camera1')
@@ -258,70 +309,110 @@ class FullDataCollection:
             fov = 90
             position = {"x": 0, "y": 0, "z": 0}
             orientation = {"pitch": 0, "yaw": 0, "roll": 0}
+            exposure = 0.0
+            focal_length = 1000.0
+            placement_number = None
             
-            # Try to get values from camera config
-            if camera_id in self.camera_config:
-                camera_data = self.camera_config[camera_id]
+            # Check if we're using subset configuration
+            if self.current_subset_config:
+                print(f"Using subset configuration for {camera_id}...")
                 
-                # Check if specs/resolution exists
-                if "specs" in camera_data and "resolution" in camera_data["specs"]:
-                    width = camera_data["specs"]["resolution"]["width"]
-                    height = camera_data["specs"]["resolution"]["height"]
-                    print(f"Using resolution from camera config: {width}x{height}")
-                # Also check direct resolution key
-                elif "resolution" in camera_data:
-                    width = camera_data["resolution"]["width"]
-                    height = camera_data["resolution"]["height"]
-                    print(f"Using resolution from camera config: {width}x{height}")
+                # Parse subset configuration to find this camera
+                camera_configs = self._parse_camera_config_from_subset(self.current_subset_config)
                 
-                # Check if specs/fov exists
-                if "specs" in camera_data and "fov" in camera_data["specs"]:
-                    fov = camera_data["specs"]["fov"]
-                    print(f"Using FOV from camera config: {fov}")
-                # Also check direct fov key
-                elif "fov" in camera_data:
-                    fov = camera_data["fov"]
-                    print(f"Using FOV from camera config: {fov}")
-                
-                # Get position (check both 'position' and 'location' keys)
-                if "position" in camera_data:
-                    position = camera_data["position"]
-                    print(f"Using position from camera config: {position}")
-                elif "location" in camera_data:
-                    position = camera_data["location"]
-                    print(f"Using location from camera config: {position}")
-                
-                # Get orientation (check both 'orientation' and 'rotation' keys)
-                if "orientation" in camera_data:
-                    orientation = camera_data["orientation"]
-                    print(f"Using orientation from camera config: {orientation}")
-                elif "rotation" in camera_data:
-                    orientation = camera_data["rotation"]
-                    print(f"Using rotation from camera config: {orientation}")
-            else:
-                print(f"Warning: {camera_id} not found in camera config, using default values: 1920x1080, FOV=90")
-                
-                # Only as a fallback, try to read from unrealcv.ini if it exists
-                unrealcv_ini_path = "D:/Program Files/Epic Games/UE_5.4/Engine/Binaries/Win64/unrealcv.ini"
-                if os.path.exists(unrealcv_ini_path):
-                    print(f"Reading configuration from {unrealcv_ini_path}")
-                    with open(unrealcv_ini_path, 'r') as ini_file:
-                        ini_content = ini_file.read()
+                # Look for this camera in the parsed configs
+                camera_found = False
+                for cam_name, config in camera_configs.items():
+                    if cam_name == camera_id or config["camera_id"] == int(camera_id.replace('camera', '')):
+                        print(f"Found camera configuration in subset for {camera_id}")
                         
-                        # Parse width
-                        width_match = re.search(r'Width=(\d+)', ini_content)
-                        if width_match:
-                            width = int(width_match.group(1))
+                        # Get values from subset configuration
+                        width = config["resolution"]["width"]
+                        height = config["resolution"]["height"]
+                        fov = config["fov"]
+                        exposure = config["exposure"]
+                        focal_length = config["focal_length"]
+                        placement_number = config["placement_number"]
                         
-                        # Parse height
-                        height_match = re.search(r'Height=(\d+)', ini_content)
-                        if height_match:
-                            height = int(height_match.group(1))
+                        # Get position and orientation from placement
+                        placement = config["placement"]
+                        position = placement["location"]
+                        orientation = placement["rotation"]
                         
-                        # Parse FOV
-                        fov_match = re.search(r'FOV=(\d+)', ini_content)
-                        if fov_match:
-                            fov = int(fov_match.group(1))
+                        print(f"Subset config - Resolution: {width}x{height}, FOV: {fov}, Exposure: {exposure}, Focal: {focal_length}")
+                        print(f"Subset config - Position: {position}, Orientation: {orientation}")
+                        
+                        camera_found = True
+                        break
+                
+                if not camera_found:
+                    print(f"Warning: {camera_id} not found in subset configuration, falling back to original config")
+            
+            # Fallback to original camera config behavior if not using subset or camera not found
+            if not self.current_subset_config or not camera_found:
+                # Try to get values from camera config
+                if camera_id in self.camera_config:
+                    camera_data = self.camera_config[camera_id]
+                    
+                    # Check if specs/resolution exists
+                    if "specs" in camera_data and "resolution" in camera_data["specs"]:
+                        width = camera_data["specs"]["resolution"]["width"]
+                        height = camera_data["specs"]["resolution"]["height"]
+                        print(f"Using resolution from camera config: {width}x{height}")
+                    # Also check direct resolution key
+                    elif "resolution" in camera_data:
+                        width = camera_data["resolution"]["width"]
+                        height = camera_data["resolution"]["height"]
+                        print(f"Using resolution from camera config: {width}x{height}")
+                    
+                    # Check if specs/fov exists
+                    if "specs" in camera_data and "fov" in camera_data["specs"]:
+                        fov = camera_data["specs"]["fov"]
+                        print(f"Using FOV from camera config: {fov}")
+                    # Also check direct fov key
+                    elif "fov" in camera_data:
+                        fov = camera_data["fov"]
+                        print(f"Using FOV from camera config: {fov}")
+                    
+                    # Get position (check both 'position' and 'location' keys)
+                    if "position" in camera_data:
+                        position = camera_data["position"]
+                        print(f"Using position from camera config: {position}")
+                    elif "location" in camera_data:
+                        position = camera_data["location"]
+                        print(f"Using location from camera config: {position}")
+                    
+                    # Get orientation (check both 'orientation' and 'rotation' keys)
+                    if "orientation" in camera_data:
+                        orientation = camera_data["orientation"]
+                        print(f"Using orientation from camera config: {orientation}")
+                    elif "rotation" in camera_data:
+                        orientation = camera_data["rotation"]
+                        print(f"Using rotation from camera config: {orientation}")
+                else:
+                    print(f"Warning: {camera_id} not found in camera config, using default values: 1920x1080, FOV=90")
+                    
+                    # Only as a fallback, try to read from unrealcv.ini if it exists
+                    unrealcv_ini_path = "D:/Program Files/Epic Games/UE_5.4/Engine/Binaries/Win64/unrealcv.ini"
+                    if os.path.exists(unrealcv_ini_path):
+                        print(f"Reading configuration from {unrealcv_ini_path}")
+                        with open(unrealcv_ini_path, 'r') as ini_file:
+                            ini_content = ini_file.read()
+                            
+                            # Parse width
+                            width_match = re.search(r'Width=(\d+)', ini_content)
+                            if width_match:
+                                width = int(width_match.group(1))
+                            
+                            # Parse height
+                            height_match = re.search(r'Height=(\d+)', ini_content)
+                            if height_match:
+                                height = int(height_match.group(1))
+                            
+                            # Parse FOV
+                            fov_match = re.search(r'FOV=(\d+)', ini_content)
+                            if fov_match:
+                                fov = int(fov_match.group(1))
             
             # Create camera config JSON structure with all information
             camera_config_data = {
@@ -331,8 +422,14 @@ class FullDataCollection:
                 },
                 "fov_deg": fov,
                 "position": position,
-                "orientation": orientation
+                "orientation": orientation,
+                "exposure": exposure,
+                "focal_length": focal_length
             }
+            
+            # Add placement number if available (from subset config)
+            if placement_number is not None:
+                camera_config_data["placement_number"] = placement_number
             
             # Save to JSON file
             camera_config_path = os.path.join(target_dir, "camera_config.json")
@@ -806,83 +903,10 @@ class FullDataCollection:
         print(f"=== END DRONE MOVEMENT ===\n")
 
     def _land_and_reset(self):
-        """Perform landing sequence and reset drone"""
-        print("\nHovering for 3 seconds before landing...")
+        """Perform simplified landing sequence and reset drone"""
+        print("\nSimplified landing sequence...")
+        print("Waiting 3 seconds before reset...")
         time.sleep(3)
-        
-        print("Initiating return to home sequence...")
-        
-        # Check if initial position was ever set
-        if self.initial_position is None or self.initial_z is None:
-            print("WARNING: Initial position not set. Attempting basic land/reset.")
-            try:
-                print("Landing...")
-                self.airsim_client.landAsync().join()
-                print("Resetting drone...")
-                self.airsim_client.reset()
-                print("Drone reset complete")
-            except Exception as e:
-                print(f"Error during basic land/reset: {e}")
-            return # Exit the function early
-            
-        # Proceed with return to home if initial position exists
-        try:
-            # Ensure simulation is running
-            if self.unrealcv_client.request('vget /action/game/is_paused') == 'true':
-                self.unrealcv_client.request('vset /action/game/resume')
-            
-            # Get current spawn position
-            start_pose = self.airsim_client.simGetVehiclePose()
-            spawn_x = start_pose.position.x_val
-            spawn_y = start_pose.position.y_val
-            spawn_z = start_pose.position.z_val
-            
-            # Calculate relative position to initial position
-            rel_x = self.initial_position.x_val - spawn_x
-            rel_y = self.initial_position.y_val - spawn_y
-            rel_z = (self.initial_z - 3) - spawn_z  # 3m above initial height
-            
-            # First move to a position 3m above the initial position
-            print(f"Moving to position 3m above initial position...")
-            print(f"Initial position - X: {self.initial_position.x_val:.2f}m, Y: {self.initial_position.y_val:.2f}m, Z: {self.initial_z:.2f}m")
-            print(f"Spawn position - X: {spawn_x:.2f}m, Y: {spawn_y:.2f}m, Z: {spawn_z:.2f}m")
-            print(f"Relative movement - X: {rel_x:.2f}m, Y: {rel_y:.2f}m, Z: {rel_z:.2f}m")
-            
-            self.airsim_client.moveToPositionAsync(
-                x=rel_x,
-                y=rel_y,
-                z=rel_z,
-                velocity=5
-            ).join()
-            
-            # Update spawn position after movement
-            start_pose = self.airsim_client.simGetVehiclePose()
-            spawn_x = start_pose.position.x_val
-            spawn_y = start_pose.position.y_val
-            spawn_z = start_pose.position.z_val
-            
-            # Calculate relative position to exact initial position
-            rel_x = self.initial_position.x_val - spawn_x
-            rel_y = self.initial_position.y_val - spawn_y
-            rel_z = self.initial_z - spawn_z
-            
-            print("Returning to initial position...")
-            print(f"Relative movement - X: {rel_x:.2f}m, Y: {rel_y:.2f}m, Z: {rel_z:.2f}m")
-            
-            # Then move to the exact initial position
-            self.airsim_client.moveToPositionAsync(
-                x=rel_x,
-                y=rel_y,
-                z=rel_z,
-                velocity=2
-            ).join()
-            
-            # Land from there
-            print("Landing...")
-            self.airsim_client.landAsync().join()
-            
-        except Exception as e:
-            print(f"Error during return to home: {e}")
         
         try:
             print("Resetting drone...")
@@ -890,8 +914,8 @@ class FullDataCollection:
             print("Drone reset complete")
         except Exception as e:
             print(f"Error resetting drone: {e}")
-        finally:
-            return  # Ensure we exit the method
+        
+        print("Landing and reset sequence complete")
 
     def _print_current_position(self):
         """Print current position information"""
@@ -1095,20 +1119,23 @@ class FullDataCollection:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             base_filename = f"{self.frame_index}_{timestamp}_{camera_id}"
             
+            # Get appropriate capture directories (subset-specific if available)
+            capture_dirs = self._get_camera_capture_dirs(camera_id)
+            
             # Capture Mask
             mask_filename = f"{base_filename}_object_mask.png"
-            mask_path = os.path.join(self.camera_dirs[camera_id]['mask'], mask_filename)
+            mask_path = os.path.join(capture_dirs['mask'], mask_filename)
             mask_result = self.unrealcv_client.request(f'vget /camera/{camera_num}/object_mask {mask_path}')
             print(f"  Mask capture ({mask_filename}): {mask_result}")
             
             # Capture RGB
             rgb_filename = f"{base_filename}_lit.png"
-            rgb_path = os.path.join(self.camera_dirs[camera_id]['rgb'], rgb_filename)
+            rgb_path = os.path.join(capture_dirs['rgb'], rgb_filename)
             rgb_result = self.unrealcv_client.request(f'vget /camera/{camera_num}/lit {rgb_path}')
             print(f"  RGB capture ({rgb_filename}): {rgb_result}")
             
             # Save State if enabled
-            if self.save_state:
+            if self.save_state and capture_dirs['state']:
                 print("  Saving state data...")
                 self._save_state_to_json(camera_id, base_filename, timestamp, self.frame_index)
                 print("  State data saved.")
@@ -1124,13 +1151,14 @@ class FullDataCollection:
             # time.sleep(1) # Removed redundant sleep, already have wait + capture time
         
         print(f"\nCompleted all waypoints for {camera_id}")
-        # Print final stats
+        # Print final stats using the actual capture directories
+        capture_dirs = self._get_camera_capture_dirs(camera_id)
         print(f"Captured {self.frame_index} frames for {camera_id}")
         print(f"{camera_id} images saved to:")
-        print(f"  RGB: {self.camera_dirs[camera_id]['rgb']}")
-        print(f"  Mask: {self.camera_dirs[camera_id]['mask']}")
-        if self.save_state:
-            print(f"  State: {self.camera_dirs[camera_id]['state']}")
+        print(f"  RGB: {capture_dirs['rgb']}")
+        print(f"  Mask: {capture_dirs['mask']}")
+        if self.save_state and capture_dirs['state']:
+            print(f"  State: {capture_dirs['state']}")
 
     def _move_to_geographic_waypoint(self, latitude, longitude, relative_altitude, velocity):
         """Move drone to specified waypoint using geographic coordinates"""
@@ -1368,9 +1396,12 @@ class FullDataCollection:
             'drone': drone_state
         }
         
+        # Get appropriate capture directories (subset-specific if available)
+        capture_dirs = self._get_camera_capture_dirs(camera_id)
+        
         # Create state filename to match image filename pattern
         state_filename = f"{frame_index}_{timestamp}_{camera_id}_state.json"
-        state_path = os.path.join(self.camera_dirs[camera_id]['state'], state_filename)
+        state_path = os.path.join(capture_dirs['state'], state_filename)
         
         # Save to JSON file
         with open(state_path, 'w') as f:
@@ -1491,20 +1522,48 @@ class FullDataCollection:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 base_filename = f"{frame_indices[camera_id]}_{timestamp}_{camera_id}"
                 
+                # Get appropriate capture directories (subset-specific if available)
+                capture_dirs = self._get_camera_capture_dirs(camera_id)
+                
+                if not capture_dirs['rgb'] or not capture_dirs['mask']:
+                    print(f"Error: Invalid capture directories for {camera_id}")
+                    print(f"RGB: {capture_dirs['rgb']}, Mask: {capture_dirs['mask']}")
+                    continue
+                
+                print(f"  Capture directories for {camera_id}:")
+                print(f"    RGB dir: {capture_dirs['rgb']}")
+                print(f"    Mask dir: {capture_dirs['mask']}")
+                
                 # Capture Mask
                 mask_filename = f"{base_filename}_object_mask.png"
-                mask_path = os.path.join(self.camera_dirs[camera_id]['mask'], mask_filename)
+                mask_path = os.path.join(capture_dirs['mask'], mask_filename)
+                print(f"  Attempting mask capture to: {mask_path}")
                 mask_result = self.unrealcv_client.request(f'vget /camera/{camera_num}/object_mask {mask_path}')
-                print(f"  Mask capture ({mask_filename}): {mask_result}")
+                print(f"  Mask capture result: {mask_result}")
+                
+                # Verify mask file was created
+                if os.path.exists(mask_path):
+                    file_size = os.path.getsize(mask_path)
+                    print(f"  ✓ Mask file created: {mask_path} ({file_size} bytes)")
+                else:
+                    print(f"  ✗ Mask file NOT created: {mask_path}")
                 
                 # Capture RGB
                 rgb_filename = f"{base_filename}_lit.png"
-                rgb_path = os.path.join(self.camera_dirs[camera_id]['rgb'], rgb_filename)
+                rgb_path = os.path.join(capture_dirs['rgb'], rgb_filename)
+                print(f"  Attempting RGB capture to: {rgb_path}")
                 rgb_result = self.unrealcv_client.request(f'vget /camera/{camera_num}/lit {rgb_path}')
-                print(f"  RGB capture ({rgb_filename}): {rgb_result}")
+                print(f"  RGB capture result: {rgb_result}")
+                
+                # Verify RGB file was created
+                if os.path.exists(rgb_path):
+                    file_size = os.path.getsize(rgb_path)
+                    print(f"  ✓ RGB file created: {rgb_path} ({file_size} bytes)")
+                else:
+                    print(f"  ✗ RGB file NOT created: {rgb_path}")
                 
                 # Save State if enabled
-                if self.save_state:
+                if self.save_state and capture_dirs['state']:
                     print(f"  Saving state data for {camera_id}...")
                     self._save_state_to_json(camera_id, base_filename, timestamp, frame_indices[camera_id])
                 
@@ -1518,14 +1577,15 @@ class FullDataCollection:
             print(f"Completed processing for waypoint {waypoint['number']}")
         
         print(f"\nCompleted all waypoints in parallel mode")
-        # Print final stats for each camera
+        # Print final stats for each camera using actual capture directories
         print("Capture statistics:")
         for camera_id, frame_count in frame_indices.items():
+            capture_dirs = self._get_camera_capture_dirs(camera_id)
             print(f"  {camera_id}: {frame_count} frames")
-            print(f"    RGB: {self.camera_dirs[camera_id]['rgb']}")
-            print(f"    Mask: {self.camera_dirs[camera_id]['mask']}")
-            if self.save_state:
-                print(f"    State: {self.camera_dirs[camera_id]['state']}")
+            print(f"    RGB: {capture_dirs['rgb']}")
+            print(f"    Mask: {capture_dirs['mask']}")
+            if self.save_state and capture_dirs['state']:
+                print(f"    State: {capture_dirs['state']}")
 
     def _extract_camera_fov(self, camera_config):
         """
@@ -1570,22 +1630,109 @@ class FullDataCollection:
         Run the data collection process based on the selected mode:
         - Sequential mode: Process each camera fully before moving to the next
         - Parallel mode: Set up all cameras and capture from all at each waypoint
+        - Subset mode: When z_folder is provided, iterate through subset configurations
         """
         try:
-            # Set up initial agent colors (only needs to be done once)
-            self._setup_camera()
-            
-            # Setup all cameras with the FOV values from the config file
-            self._setup_cameras_with_fov()
-            
-            if self.parallel_mode:
-                # --- PARALLEL MODE ---
-                print("\n=== Starting data collection in PARALLEL mode ===")
+            # Check if we're using subset files from z_folder
+            if self.z_folder and self.subset_files:
+                print(f"\n=== Starting data collection with {len(self.subset_files)} subset configurations ===")
                 
-                # Set up all cameras at once
-                self._setup_all_cameras()
+                # Iterate through each subset file
+                for subset_index, subset_file in enumerate(self.subset_files):
+                    print(f"\n--- Processing subset {subset_index + 1}/{len(self.subset_files)}: {os.path.basename(subset_file)} ---")
+                    
+                    # Load subset configuration
+                    try:
+                        with open(subset_file, 'r') as f:
+                            subset_config = json.load(f)
+                        self._set_subset_config(subset_config)
+                        
+                        # Set up initial agent colors (only needs to be done once per subset)
+                        self._setup_camera()
+                        
+                        # Setup cameras based on subset configuration
+                        active_cameras = self._setup_cameras_from_subset(subset_config)
+                        
+                        # Create subset-specific directories
+                        self._setup_subset_directories(subset_file, active_cameras)
+                        
+                        if self.parallel_mode:
+                            self._run_subset_parallel_mode(active_cameras)
+                        else:
+                            self._run_subset_sequential_mode(active_cameras)
+                            
+                    except Exception as e:
+                        print(f"Error processing subset {subset_file}: {e}")
+                        continue
+                        
+                print("=== Completed all subset configurations ===")
+                return
                 
-                # Initialize drone and take off once for the whole mission
+            # Original behavior when no z_folder is provided
+            self._run_original_mode()
+            
+        except Exception as e:
+            print(f"Error in main run method: {e}")
+            
+    def _run_original_mode(self):
+        """Run the original data collection mode without subset files"""
+        # Set up initial agent colors (only needs to be done once)
+        self._setup_camera()
+        
+        # Setup all cameras with the FOV values from the config file
+        self._setup_cameras_with_fov()
+        
+        if self.parallel_mode:
+            # --- PARALLEL MODE ---
+            print("\n=== Starting data collection in PARALLEL mode ===")
+            
+            # Set up all cameras at once
+            self._setup_all_cameras()
+            
+            # Initialize drone and take off once for the whole mission
+            if self.airsim_client:
+                try:
+                    self._initialize_drone()
+                    self._takeoff()
+                    
+                    # Print initial position after takeoff
+                    if self.config['drone_config'].get('coordinate_system') == 'geographic':
+                        self._print_current_altitude()
+                    else:
+                        self._print_current_position()
+                        
+                    # Execute mission in parallel mode (all cameras capture at each waypoint)
+                    self._execute_mission_parallel()
+                    
+                    # Land drone after completing all waypoints
+                    self._land_and_reset()
+                except Exception as e:
+                    print(f"Error during parallel mission execution: {e}")
+                    try:
+                        if self.airsim_client:
+                            print("Attempting emergency landing after error...")
+                            self._land_and_reset()
+                    except Exception as land_e:
+                        print(f"Error during emergency landing: {land_e}")
+            else:
+                print("WARNING: No AirSim client available. Cannot control drone.")
+            
+            print("=== Completed data collection in PARALLEL mode ===\n")
+            
+        else:
+            # --- SEQUENTIAL MODE ---
+            # Process each camera in full sequence (existing code)
+            for camera_id in self.camera_config.keys():
+                print(f"\n=== Starting complete data collection cycle for {camera_id} ===")
+                
+                # Set up this specific camera's position/rotation
+                self._setup_specific_camera(camera_id)
+                
+                # Reset frame index based on existing files for this camera's output dirs
+                self.frame_index = self._get_max_frame_index_for_camera(camera_id)
+                print(f"Starting data collection for {camera_id} from frame index: {self.frame_index}")
+                
+                # Initialize drone and take off - Do this once for this camera's full cycle
                 if self.airsim_client:
                     try:
                         self._initialize_drone()
@@ -1597,13 +1744,14 @@ class FullDataCollection:
                         else:
                             self._print_current_position()
                             
-                        # Execute mission in parallel mode (all cameras capture at each waypoint)
-                        self._execute_mission_parallel()
+                        # Execute mission (which now includes sequential capture)
+                        self._execute_mission(camera_id)
                         
-                        # Land drone after completing all waypoints
+                        # Land drone after completing all waypoints for this camera
                         self._land_and_reset()
                     except Exception as e:
-                        print(f"Error during parallel mission execution: {e}")
+                        print(f"Error during mission execution for {camera_id}: {e}")
+                        # Try to land/reset even if there was an error
                         try:
                             if self.airsim_client:
                                 print("Attempting emergency landing after error...")
@@ -1613,59 +1761,19 @@ class FullDataCollection:
                 else:
                     print("WARNING: No AirSim client available. Cannot control drone.")
                 
-                print("=== Completed data collection in PARALLEL mode ===\n")
+                print(f"=== Completed full data collection cycle for {camera_id} ===\n")
                 
-            else:
-                # --- SEQUENTIAL MODE ---
-                # Process each camera in full sequence (existing code)
-                for camera_id in self.camera_config.keys():
-                    print(f"\n=== Starting complete data collection cycle for {camera_id} ===")
-                    
-                    # Set up this specific camera's position/rotation
-                    self._setup_specific_camera(camera_id)
-                    
-                    # Reset frame index based on existing files for this camera's output dirs
-                    self.frame_index = self._get_max_frame_index_for_camera(camera_id)
-                    print(f"Starting data collection for {camera_id} from frame index: {self.frame_index}")
-                    
-                    # Initialize drone and take off - Do this once for this camera's full cycle
-                    if self.airsim_client:
-                        try:
-                            self._initialize_drone()
-                            self._takeoff()
-                            
-                            # Print initial position after takeoff
-                            if self.config['drone_config'].get('coordinate_system') == 'geographic':
-                                self._print_current_altitude()
-                            else:
-                                self._print_current_position()
-                                
-                            # Execute mission (which now includes sequential capture)
-                            self._execute_mission(camera_id)
-                            
-                            # Land drone after completing all waypoints for this camera
-                            self._land_and_reset()
-                        except Exception as e:
-                            print(f"Error during mission execution for {camera_id}: {e}")
-                            # Try to land/reset even if there was an error
-                            try:
-                                if self.airsim_client:
-                                    print("Attempting emergency landing after error...")
-                                    self._land_and_reset()
-                            except Exception as land_e:
-                                print(f"Error during emergency landing: {land_e}")
-                    else:
-                        print("WARNING: No AirSim client available. Cannot control drone.")
-                    
-                    print(f"=== Completed full data collection cycle for {camera_id} ===\n")
-                    
-                    # Pause between camera cycles to ensure everything is cleaned up
-                    print(f"Pausing for 5 seconds before starting next camera...")
-                    time.sleep(5)
-                
-                # Final completion message
-                print("\n=== All camera cycles completed successfully ===")
+                # Pause between camera cycles to ensure everything is cleaned up
+                print(f"Pausing for 5 seconds before starting next camera...")
+                time.sleep(5)
             
+            # Final completion message
+            print("\n=== All camera cycles completed successfully ===")
+        
+        # Handle any errors and cleanup
+        try:
+            # Any final cleanup if needed
+            pass
         except Exception as e:
             print(f"Error during data collection run: {e}")
         finally:
@@ -1675,8 +1783,8 @@ class FullDataCollection:
                     print("Performing final landing and reset...")
                     # Make sure simulation is running before landing/resetting
                     if self.unrealcv_client.request('vget /action/game/is_paused') == 'true':
-                         self.unrealcv_client.request('vset /action/game/resume')
-                    self._land_and_reset() 
+                        self.unrealcv_client.request('vset /action/game/resume')
+                    self._land_and_reset()
             except Exception as e:
                 print(f"Error during final landing/reset: {e}")
             
@@ -1684,6 +1792,292 @@ class FullDataCollection:
                 self.unrealcv_client.disconnect()
             print("Data collection complete.")
             return
+
+    def _run_subset_parallel_mode(self, active_cameras):
+        """Run data collection in parallel mode for subset configuration"""
+        print("\n=== Starting subset data collection in PARALLEL mode ===")
+        
+        # Initialize drone and take off once for the whole mission
+        if self.airsim_client:
+            try:
+                self._initialize_drone()
+                self._takeoff()
+                
+                # Print initial position after takeoff
+                if self.config['drone_config'].get('coordinate_system') == 'geographic':
+                    self._print_current_altitude()
+                else:
+                    self._print_current_position()
+                    
+                # Execute mission in parallel mode (all active cameras capture at each waypoint)
+                self._execute_mission_parallel_subset(active_cameras)
+                
+                # Land drone after completing all waypoints
+                self._land_and_reset()
+            except Exception as e:
+                print(f"Error during subset parallel mission execution: {e}")
+                try:
+                    if self.airsim_client:
+                        print("Attempting emergency landing after error...")
+                        self._land_and_reset()
+                except Exception as land_e:
+                    print(f"Error during emergency landing: {land_e}")
+        else:
+            print("WARNING: No AirSim client available. Cannot control drone.")
+        
+        print("=== Completed subset data collection in PARALLEL mode ===\n")
+        
+    def _run_subset_sequential_mode(self, active_cameras):
+        """Run data collection in sequential mode for subset configuration"""
+        print("\n=== Starting subset data collection in SEQUENTIAL mode ===")
+        
+        # Process each active camera in full sequence
+        for cam_name, config in active_cameras.items():
+            camera_id = config["camera_id"]
+            print(f"\n=== Starting complete data collection cycle for {cam_name} (ID: {camera_id}) ===")
+            
+            # Reset frame index based on existing files for this camera's output dirs
+            self.frame_index = self._get_max_frame_index_for_camera(camera_id)
+            print(f"Starting data collection for {cam_name} from frame index: {self.frame_index}")
+            
+            # Initialize drone and take off - Do this once for this camera's full cycle
+            if self.airsim_client:
+                try:
+                    self._initialize_drone()
+                    self._takeoff()
+                    
+                    # Print initial position after takeoff
+                    if self.config['drone_config'].get('coordinate_system') == 'geographic':
+                        self._print_current_altitude()
+                    else:
+                        self._print_current_position()
+                        
+                    # Execute mission for this camera
+                    self._execute_mission_subset(camera_id)
+                    
+                    # Land drone after completing all waypoints for this camera
+                    self._land_and_reset()
+                except Exception as e:
+                    print(f"Error during mission execution for {cam_name}: {e}")
+                    # Try to land/reset even if there was an error
+                    try:
+                        if self.airsim_client:
+                            print("Attempting emergency landing after error...")
+                            self._land_and_reset()
+                    except Exception as land_e:
+                        print(f"Error during emergency landing: {land_e}")
+            else:
+                print("WARNING: No AirSim client available. Cannot control drone.")
+            
+            print(f"=== Completed full data collection cycle for {cam_name} ===\n")
+            
+            # Pause between camera cycles to ensure everything is cleaned up
+            print(f"Pausing for 5 seconds before starting next camera...")
+            time.sleep(5)
+        
+        print("\n=== All subset camera cycles completed successfully ===")
+        
+    def _execute_mission_parallel_subset(self, active_cameras):
+        """Execute mission in parallel mode for subset - all active cameras capture at each waypoint"""
+        print("Starting parallel mission execution for subset...")
+        
+        # Get camera IDs from active cameras
+        camera_ids = [str(config["camera_id"]) for config in active_cameras.values()]
+        print(f"Active cameras for parallel execution: {camera_ids}")
+        
+        # We need AirSim client to move the drone
+        if not self.airsim_client:
+            print("ERROR: No AirSim client available. Cannot execute drone mission.")
+            print("Please ensure AirSim is running and correctly configured.")
+            time.sleep(15)  # Wait a bit to acknowledge the error
+            return
+            
+        mission_file = self.config['drone_config']['mission_file']
+        
+        # Print some debug information about the mission file
+        print(f"\n=== MISSION DETAILS FOR SUBSET PARALLEL MODE ===")
+        try:
+            if not os.path.exists(mission_file):
+                print(f"WARNING: Mission file not found at {mission_file}")
+                alternative_path = os.path.join(os.path.dirname(__file__), mission_file)
+                print(f"Trying alternative path: {alternative_path}")
+                if os.path.exists(alternative_path):
+                    mission_file = alternative_path
+                    print(f"Found mission file at alternative path")
+                else:
+                    print(f"ERROR: Could not find mission file at any location")
+                    return
+        except Exception as e:
+            print(f"Error checking mission file: {e}")
+            
+        with open(mission_file, 'r') as f:
+            mission_data = json.load(f)
+            print(f"Successfully loaded mission data from {mission_file}")
+        
+        # Check if the new JSON schema is used (with "mission" wrapper)
+        if "mission" in mission_data:
+            print(f"Detected new mission schema with 'mission' wrapper")
+            mission_data = mission_data["mission"]
+        else:
+            print(f"Using legacy mission schema format")
+        
+        target_drone = mission_data['drones'][0] # Simplified for now
+        waypoints = target_drone['waypoints']
+        print(f"Found {len(waypoints)} waypoints for drone")
+        print(f"=== END MISSION DETAILS ===\n")
+        
+        # Create camera number mapping from active cameras only
+        camera_nums = {}
+        for cam_name, config in active_cameras.items():
+            camera_id = config["camera_id"]
+            camera_key = f"camera{camera_id}"
+            camera_nums[camera_key] = camera_id
+        
+        print(f"Camera mapping for subset: {camera_nums}")
+        
+        max_images = self.config['data_collection'].get('max_images', float('inf'))
+        start_time = time.time()
+        
+        # Dictionary to track frame index for each active camera
+        frame_indices = {}
+        for camera_key in camera_nums.keys():
+            if camera_key in self.camera_dirs:
+                frame_indices[camera_key] = self._get_max_frame_index_for_camera(camera_key)
+            else:
+                frame_indices[camera_key] = 0
+                print(f"Warning: {camera_key} not found in camera_dirs, starting from frame 0")
+        
+        # Navigate through waypoints
+        for i, waypoint in enumerate(waypoints):
+            # Check if max images or duration reached before moving
+            any_camera_max_reached = any(index >= max_images for index in frame_indices.values())
+            if any_camera_max_reached or (time.time() - start_time) >= self.capture_duration:
+                print("Reached max images or duration limit. Ending mission.")
+                break
+                
+            print(f"\n>>> NAVIGATING TO WAYPOINT {waypoint['number']} ({i+1}/{len(waypoints)}) <<< (SUBSET PARALLEL MODE)")
+            
+            velocity = waypoint.get('speed', 5)
+            
+            # Print waypoint details
+            print(f"Waypoint details:")
+            print(json.dumps(waypoint, indent=2))
+            
+            # Extract waypoint coordinates
+            x = waypoint.get('x', 0)
+            y = waypoint.get('y', 0)
+            altitude = waypoint.get('altitude', 0)
+            
+            # Check if position is nested (new format)
+            if 'position' in waypoint:
+                if 'x' in waypoint['position']: x = waypoint['position']['x']
+                if 'y' in waypoint['position']: y = waypoint['position']['y']
+                if 'z' in waypoint['position']: altitude = waypoint['position']['z']
+            
+            print(f"Using local coordinates: X={x}, Y={y}, Alt={altitude}")
+            # Move drone to waypoint
+            self._move_to_waypoint(
+                x=x,
+                y=y,
+                altitude=altitude,
+                velocity=velocity
+            )
+            
+            print(f"Arrived at waypoint {waypoint['number']}. Waiting 3 seconds...")
+            time.sleep(3)
+            
+            # --- Capture from all active cameras sequentially ---
+            print(f"Pausing simulation for image capture at waypoint {waypoint['number']}...")
+            self.unrealcv_client.request('vset /action/game/pause')
+            time.sleep(0.5)  # Short delay to ensure pause takes effect
+            
+            for camera_key, camera_num in camera_nums.items():
+                # Skip if this camera has reached max images
+                if frame_indices[camera_key] >= max_images:
+                    print(f"Skipping {camera_key} - reached max images")
+                    continue
+                    
+                print(f"Capturing from {camera_key} (frame {frame_indices[camera_key]})...")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                base_filename = f"{frame_indices[camera_key]}_{timestamp}_{camera_key}"
+                
+                # Get appropriate capture directories
+                capture_dirs = self._get_camera_capture_dirs(camera_key)
+                
+                if not capture_dirs['rgb'] or not capture_dirs['mask']:
+                    print(f"Error: Invalid capture directories for {camera_key}")
+                    print(f"RGB: {capture_dirs['rgb']}, Mask: {capture_dirs['mask']}")
+                    continue
+                
+                print(f"  Capture directories for {camera_key}:")
+                print(f"    RGB dir: {capture_dirs['rgb']}")
+                print(f"    Mask dir: {capture_dirs['mask']}")
+                
+                # Capture Mask
+                mask_filename = f"{base_filename}_object_mask.png"
+                mask_path = os.path.join(capture_dirs['mask'], mask_filename)
+                print(f"  Attempting mask capture to: {mask_path}")
+                mask_result = self.unrealcv_client.request(f'vget /camera/{camera_num}/object_mask {mask_path}')
+                print(f"  Mask capture result: {mask_result}")
+                
+                # Verify mask file was created
+                if os.path.exists(mask_path):
+                    file_size = os.path.getsize(mask_path)
+                    print(f"  ✓ Mask file created: {mask_path} ({file_size} bytes)")
+                else:
+                    print(f"  ✗ Mask file NOT created: {mask_path}")
+                
+                # Capture RGB
+                rgb_filename = f"{base_filename}_lit.png"
+                rgb_path = os.path.join(capture_dirs['rgb'], rgb_filename)
+                print(f"  Attempting RGB capture to: {rgb_path}")
+                rgb_result = self.unrealcv_client.request(f'vget /camera/{camera_num}/lit {rgb_path}')
+                print(f"  RGB capture result: {rgb_result}")
+                
+                # Verify RGB file was created
+                if os.path.exists(rgb_path):
+                    file_size = os.path.getsize(rgb_path)
+                    print(f"  ✓ RGB file created: {rgb_path} ({file_size} bytes)")
+                else:
+                    print(f"  ✗ RGB file NOT created: {rgb_path}")
+                
+                # Save State if enabled
+                if self.save_state and capture_dirs['state']:
+                    print(f"  Saving state data for {camera_key}...")
+                    self._save_state_to_json(camera_key, base_filename, timestamp, frame_indices[camera_key])
+                
+                # Increment frame index for this camera
+                frame_indices[camera_key] += 1
+            
+            print(f"Resuming simulation...")
+            self.unrealcv_client.request('vset /action/game/resume')
+            time.sleep(0.5)  # Short delay after resuming
+            
+            print(f"Completed processing for waypoint {waypoint['number']}")
+        
+        print(f"\nCompleted all waypoints in subset parallel mode")
+        # Print final stats for each camera using actual capture directories
+        print("Capture statistics:")
+        for camera_key, frame_count in frame_indices.items():
+            capture_dirs = self._get_camera_capture_dirs(camera_key)
+            print(f"  {camera_key}: {frame_count} frames")
+            print(f"    RGB: {capture_dirs['rgb']}")
+            print(f"    Mask: {capture_dirs['mask']}")
+            if self.save_state and capture_dirs['state']:
+                print(f"    State: {capture_dirs['state']}")
+
+    def _execute_mission_subset(self, camera_id):
+        """Execute mission for a specific camera in subset mode"""
+        print(f"Starting mission execution for camera {camera_id}...")
+        
+        # Use the existing mission execution logic for single camera
+        # Make sure we use the proper camera key format
+        if isinstance(camera_id, int):
+            camera_key = f"camera{camera_id}"
+        else:
+            camera_key = camera_id
+            
+        self._execute_mission(camera_key)
 
     def init_drone_type(self, drone_type):
         """
@@ -1836,6 +2230,280 @@ class FullDataCollection:
         print(f"Camera {preferred_num} directory already exists, using {next_num} instead")
         return next_num
 
+    def _load_subset_files(self):
+        """Load subset files from the z_folder"""
+        if self.z_folder:
+            try:
+                import glob
+                import re
+                subset_pattern = os.path.join(self.z_folder, 'subset_*.json')
+                subset_files = glob.glob(subset_pattern)
+                
+                # Sort numerically instead of alphabetically
+                def extract_number(filename):
+                    match = re.search(r'subset_(\d+)\.json', os.path.basename(filename))
+                    return int(match.group(1)) if match else 0
+                
+                self.subset_files = sorted(subset_files, key=extract_number)
+                print(f"Loaded {len(self.subset_files)} subset files from {self.z_folder}")
+                if self.subset_files:
+                    print(f"First few files: {[os.path.basename(f) for f in self.subset_files[:5]]}")
+            except Exception as e:
+                print(f"Error loading subset files: {e}")
+        else:
+            print("No z_folder specified, skipping subset file loading")
+
+    def _get_subset_file(self, index):
+        """Get a subset file based on the current subset index"""
+        if self.subset_files:
+            return self.subset_files[index % len(self.subset_files)]
+        else:
+            print("No subset files available")
+            return None
+
+    def _get_subset_config(self, index):
+        """Get a subset configuration based on the current subset index"""
+        file_path = self._get_subset_file(index)
+        if file_path:
+            try:
+                with open(file_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"Error reading subset configuration: {e}")
+        else:
+            print("No subset configuration available")
+            return None
+
+    def _set_subset_config(self, subset_config):
+        """Set the current subset configuration"""
+        self.current_subset_config = subset_config
+        print(f"Set current subset config with {len(subset_config)} cameras")
+
+    def _get_current_subset_config(self):
+        """Get the current subset configuration"""
+        return self.current_subset_config
+
+    def _get_current_subset_index(self):
+        """Get the current subset index"""
+        return self.current_subset_index
+
+    def _increment_subset_index(self):
+        """Increment the current subset index"""
+        self.current_subset_index = (self.current_subset_index + 1) % len(self.subset_files)
+        
+    def _parse_camera_config_from_subset(self, subset_config):
+        """Parse camera configuration from subset format to usable format
+        
+        Input format: [camera_id, fov, width, height, exposure_level, focal_length, loc1, loc2, loc3, loc4, detection_output]
+        Returns dictionary with camera configurations mapped to placement positions
+        """
+        camera_configs = {}
+        
+        for i, cam_config in enumerate(subset_config):
+            camera_id, fov, width, height, exposure, focal_length, loc1, loc2, loc3, loc4, detection_output = cam_config
+            
+            # Determine which placement (1-4) based on loc1-loc4 one-hot encoding
+            placement_num = None
+            loc_values = [loc1, loc2, loc3, loc4]
+            for j, val in enumerate(loc_values):
+                if val == 1:
+                    placement_num = j + 1  # placement1, placement2, etc.
+                    break
+                    
+            if placement_num is None:
+                print(f"Warning: Camera {camera_id} has no valid placement location")
+                continue
+                
+            # Get placement position and rotation from the config file
+            placement_key = f"placement{placement_num}"
+            if placement_key not in self.camera_config:
+                print(f"Warning: {placement_key} not found in camera config")
+                continue
+                
+            placement_info = self.camera_config[placement_key]
+            
+            camera_key = f"camera{camera_id}"
+            camera_configs[camera_key] = {
+                "camera_id": camera_id,
+                "fov": fov,
+                "resolution": {"width": width, "height": height},
+                "exposure": exposure,
+                "focal_length": focal_length,
+                "placement": placement_info,
+                "placement_number": placement_num
+            }
+            
+        return camera_configs
+        
+    def _configure_camera_with_unrealcv(self, camera_id, config):
+        """Configure a camera using UnrealCV commands based on subset configuration"""
+        try:
+            print(f"Configuring camera {camera_id} with UnrealCV...")
+            
+            # First, spawn cameras to ensure they exist
+            print(f"Spawning cameras...")
+            self.unrealcv_client.request('vset /cameras/spawn')
+            self.unrealcv_client.request('vset /cameras/spawn')
+            
+            # Get list of available cameras for debugging
+            camera_list = self.unrealcv_client.request('vget /cameras')
+            print(f"Available cameras after spawn: {camera_list}")
+            
+            # Set FOV
+            fov_cmd = f'vset /camera/{camera_id}/fov {config["fov"]}'
+            fov_result = self.unrealcv_client.request(fov_cmd)
+            print(f"FOV command: {fov_cmd} -> {fov_result}")
+            
+            # Set Resolution
+            width = config["resolution"]["width"]
+            height = config["resolution"]["height"]
+            size_cmd = f'vset /camera/{camera_id}/size {width} {height}'
+            size_result = self.unrealcv_client.request(size_cmd)
+            print(f"Size command: {size_cmd} -> {size_result}")
+            
+            # Set Exposure
+            exposure_cmd = f'vset /camera/{camera_id}/exposure_bias {config["exposure"]}'
+            exposure_result = self.unrealcv_client.request(exposure_cmd)
+            print(f"Exposure command: {exposure_cmd} -> {exposure_result}")
+            
+            # Set Focal Length (using focal distance with default range of 200.0)
+            focal_range = 200.0
+            focal_cmd = f'vset /camera/{camera_id}/focal {config["focal_length"]} {focal_range}'
+            focal_result = self.unrealcv_client.request(focal_cmd)
+            print(f"Focal command: {focal_cmd} -> {focal_result}")
+            
+            # Set Camera Position and Rotation
+            placement = config["placement"]
+            location = placement["location"]
+            rotation = placement["rotation"]
+            
+            # Set position
+            pos_cmd = f'vset /camera/{camera_id}/location {location["x"]} {location["y"]} {location["z"]}'
+            pos_result = self.unrealcv_client.request(pos_cmd)
+            print(f"Position command: {pos_cmd} -> {pos_result}")
+            
+            # Set rotation
+            rot_cmd = f'vset /camera/{camera_id}/rotation {rotation["pitch"]} {rotation["yaw"]} {rotation["roll"]}'
+            rot_result = self.unrealcv_client.request(rot_cmd)
+            print(f"Rotation command: {rot_cmd} -> {rot_result}")
+            
+            print(f"Successfully configured camera {camera_id}")
+            
+        except Exception as e:
+            print(f"Error configuring camera {camera_id}: {e}")
+            
+    def _setup_cameras_from_subset(self, subset_config):
+        """Setup all cameras based on subset configuration"""
+        print("Setting up cameras from subset configuration...")
+        
+        # Parse the subset configuration
+        camera_configs = self._parse_camera_config_from_subset(subset_config)
+        
+        print(f"Found {len(camera_configs)} cameras to configure:")
+        for cam_name, config in camera_configs.items():
+            print(f"  {cam_name}: placement {config['placement_number']}, FOV {config['fov']}, " +
+                  f"resolution {config['resolution']['width']}x{config['resolution']['height']}")
+        
+        # Configure each camera
+        for cam_name, config in camera_configs.items():
+            self._configure_camera_with_unrealcv(config["camera_id"], config)
+            
+        return camera_configs
+
+    def _get_camera_capture_dirs(self, camera_id):
+        """Get the appropriate directories for capturing images"""
+        print(f"Looking for camera {camera_id} in camera_dirs...")
+        print(f"Available cameras in camera_dirs: {list(self.camera_dirs.keys())}")
+        
+        if camera_id in self.camera_dirs:
+            camera_dir = self.camera_dirs[camera_id]
+            print(f"Found {camera_id} in camera_dirs")
+            return {
+                'rgb': camera_dir['rgb'],
+                'mask': camera_dir['mask'],
+                'state': camera_dir.get('state')
+            }
+        else:
+            print(f"ERROR: Camera {camera_id} not found in camera_dirs")
+            print(f"camera_dirs contents: {self.camera_dirs}")
+            return {'rgb': '', 'mask': '', 'state': ''}
+            
+    def _setup_subset_directories(self, subset_filename, active_cameras):
+        """Create subset-specific directories for active cameras
+        
+        New structure: base_dir/subset_#/camera_#/{rgb,mask,state,camera_config.json}
+        """
+        subset_name = os.path.splitext(os.path.basename(subset_filename))[0]  # e.g., "subset_1"
+        print(f"Setting up directories for {subset_name}...")
+        
+        # Create the main subset directory
+        subset_dir = os.path.join(self.base_output_dir, subset_name)
+        os.makedirs(subset_dir, exist_ok=True)
+        print(f"Created subset directory: {subset_dir}")
+        
+        # Verify subset directory exists
+        if not os.path.exists(subset_dir):
+            print(f"ERROR: Failed to create subset directory: {subset_dir}")
+            return
+        
+        # Clear any existing camera_dirs for this subset
+        print(f"Clearing previous camera_dirs. Previous count: {len(self.camera_dirs)}")
+        self.camera_dirs = {}
+        
+        # Create camera directories within the subset
+        for cam_name, config in active_cameras.items():
+            camera_id = config['camera_id']
+            camera_dir_name = f"camera_{camera_id}"
+            
+            print(f"  Processing {cam_name} with camera_id {camera_id}...")
+            
+            # Create camera-specific directory structure
+            camera_base_dir = os.path.join(subset_dir, camera_dir_name)
+            rgb_dir = os.path.join(camera_base_dir, 'rgb')
+            mask_dir = os.path.join(camera_base_dir, 'mask')
+            state_dir = os.path.join(camera_base_dir, 'state') if self.save_state else None
+            
+            # Create all directories
+            os.makedirs(rgb_dir, exist_ok=True)
+            os.makedirs(mask_dir, exist_ok=True)
+            if self.save_state:
+                os.makedirs(state_dir, exist_ok=True)
+            
+            # Verify directories were created
+            if not os.path.exists(rgb_dir):
+                print(f"    ERROR: Failed to create RGB directory: {rgb_dir}")
+            if not os.path.exists(mask_dir):
+                print(f"    ERROR: Failed to create mask directory: {mask_dir}")
+            if self.save_state and state_dir and not os.path.exists(state_dir):
+                print(f"    ERROR: Failed to create state directory: {state_dir}")
+            
+            # Store directory structure in camera_dirs using camera1, camera2 etc. format
+            camera_key = f"camera{camera_id}"
+            self.camera_dirs[camera_key] = {
+                'camera_dir': camera_base_dir,
+                'rgb': rgb_dir,
+                'mask': mask_dir,
+                'state': state_dir,
+                'camera_config_file': os.path.join(camera_base_dir, 'camera_config.json')
+            }
+            
+            print(f"  Created directories for {camera_key}:")
+            print(f"    Base: {camera_base_dir}")
+            print(f"    RGB: {rgb_dir}")
+            print(f"    Mask: {mask_dir}")
+            if self.save_state:
+                print(f"    State: {state_dir}")
+                
+            # Create camera_config.json file in the camera directory
+            self._create_camera_config_json(camera_key, camera_base_dir)
+        
+        # Show final camera_dirs structure
+        print(f"Final camera_dirs structure:")
+        for cam_key, dirs in self.camera_dirs.items():
+            print(f"  {cam_key}: RGB={dirs['rgb']}, Mask={dirs['mask']}")
+            
+        print(f"Total cameras set up: {len(self.camera_dirs)}")
+
 if __name__ == "__main__":
     import time
     
@@ -1849,6 +2517,8 @@ if __name__ == "__main__":
                         help='Draw arrows from drone to destination points')
     parser.add_argument('--parallel', action='store_true',
                         help='Run in parallel mode - all cameras capture at each waypoint')
+    parser.add_argument('--z-folder', type=str, default=None,
+                        help='Path to the z_folder containing subset configuration files')
     args = parser.parse_args()
 
     start_time = time.time()
@@ -1856,7 +2526,8 @@ if __name__ == "__main__":
         # Initialize data collection with appropriate flags
         data_collection = FullDataCollection(args.config, save_state=args.state, 
                                             visualize_line=args.visualize_line,
-                                            parallel_mode=args.parallel)
+                                            parallel_mode=args.parallel,
+                                            z_folder=args.z_folder)
         
         # Print mode message
         if args.state:
