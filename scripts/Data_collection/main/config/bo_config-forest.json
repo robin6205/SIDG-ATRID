@@ -1,0 +1,157 @@
+{
+    "drone_config": {
+        "coordinate_system": "xyz",
+        "mission_file": "C:\\Users\\Josh\\Desktop\\PhD\\Research\\SiDG-ATRID\\git\\SIDG-ATRID\\scripts\\Drone_control\\xy_coord_data\\mission_data6.json",
+        "drone_type": "DJIS900"
+    },
+    "camera_config": {
+        "camera1": {
+            "location": {
+                "x": 9225.953536,
+                "y": 27445.019475,
+                "z": 5552.753146
+            },
+            "rotation": {
+                "pitch": 17.383475,
+                "yaw": 98.400001,
+                "roll": 0.000000
+            }
+        },
+        "camera2": {
+            "location": {
+                "x": 7390.001291,
+                "y": 28614.867675,
+                "z": 5365.780453
+            },
+            "rotation": {
+                "pitch": 22.783475,
+                "yaw": 61.800001,
+                "roll": -0.000000
+            }
+        },
+        "camera3": {
+            "location": {
+                "x": 8976.284766,
+                "y": 33909.202854,
+                "z": 4333.371894
+            },
+            "rotation": {
+                "pitch": 40.183475,
+                "yaw": -85.000001,
+                "roll": -0.000000
+            }
+        },
+        "camera4": {
+            "location": {
+                "x": 10790.503158,
+                "y": 33293.621827,
+                "z": 4390.478065
+            },
+            "rotation": {
+                "pitch": 40.783475,
+                "yaw": -128.200002,
+                "roll": -0.000000
+            }
+        },
+        "camera5": {
+            "location": {
+                "x": 9352.026124,
+                "y": 29385.937891,
+                "z": 5156.473244
+            },
+            "rotation": {
+                "pitch": 77.999901,
+                "yaw": -122.599996,
+                "roll": 0.000000
+            }
+        },
+        "camera7": {
+            "attached_to_drone": true,
+            "relative_offset": {
+                "x": 400.0,
+                "y": 0.0,
+                "z": 0.0
+            },
+            "rotation": {
+                "pitch": 0.0,
+                "yaw": 180.0,
+                "roll": 0.0
+            }
+        },
+        "camera8": {
+            "attached_to_drone": true,
+            "relative_offset": {
+                "x": -400.0,
+                "y": 0.0,
+                "z": 0.0
+            },
+            "rotation": {
+                "pitch": 0.0,
+                "yaw": 0.0,
+                "roll": 0.0
+            }
+        },
+        "camera9": {
+            "attached_to_drone": true,
+            "relative_offset": {
+                "x": 0.0,
+                "y": 400.0,
+                "z": 0.0
+            },
+            "rotation": {
+                "pitch": 0.0,
+                "yaw": -90.0,
+                "roll": 0.0
+            }
+        },
+        "camera10": {
+            "attached_to_drone": true,
+            "relative_offset": {
+                "x": 0.0,
+                "y": -400.0,
+                "z": 0.0
+            },
+            "rotation": {
+                "pitch": 0.0,
+                "yaw": 90.0,
+                "roll": 0.0
+            }
+        },
+        "camera11": {
+            "attached_to_drone": true,
+            "relative_offset": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 200.0
+            },
+            "rotation": {
+                "pitch": -90.0,
+                "yaw": 0.0,
+                "roll": 0.0
+            }
+        },
+        "camera12": {
+            "attached_to_drone": true,
+            "relative_offset": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -200.0
+            },
+            "rotation": {
+                "pitch": 90.0,
+                "yaw": 0.0,
+                "roll": 0.0
+            }
+        }
+    },
+    "data_collection": {
+        "base_output_dir": "F:/SIDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-v7",
+        "level": "Forest",
+        "time_of_day": [630, 960, 1689, 1785,1958],
+        "focal_length": [10, 50, 100, 500],
+        "frame_rate": 10,
+        "capture_duration": 100000,
+        "max_images": 300,
+        "check_exclusive_mask_color": true
+    }
+} 
