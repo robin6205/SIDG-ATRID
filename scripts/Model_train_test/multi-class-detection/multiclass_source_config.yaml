@@ -1,0 +1,20 @@
+sources:
+  - class_name: quadcopter
+    sample_ratio: 0.3
+    paths:
+      - path: 'F:\SIDG-ATRID-Dataset\Train_set\sidg-atrid-dataset-v8\DJIS900'
+        default_drone_type: DJIS900
+        prefix: quadcopter_v8_djis900
+      - path: 'F:\SIDG-ATRID-Dataset\sidgatrid_dataset_v5\sidg-atrid-dataset-v5-v4-combined'
+        prefix: quadcopter_v5_combined
+  - class_name: kraken
+    paths:
+      - path: 'F:\SIDG-ATRID-Dataset\Train_set\sidg-atrid-dataset-v8\Kraken'
+        prefix: kraken_v8
+  - class_name: opterra
+    paths:
+      - path: 'F:\SIDG-ATRID-Dataset\Train_set\sidg-atrid-dataset-v8\Opterra'
+        prefix: opterra_v8
+      - path: 'F:\SIDG-ATRID-Dataset\flight_demo_data\Opterra'
+        prefix: opterra_flightdemo
+
