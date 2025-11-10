@@ -1,319 +1,150 @@
 {
-    "drone_config": {
-        "coordinate_system": "xyz",
-        "mission_file": "C:\\Users\\Josh\\Desktop\\PhD\\Research\\SiDG-ATRID\\git\\SIDG-ATRID\\scripts\\Drone_control\\xy_coord_data\\mission_data6.json",
-        "drone_type": "DJIS900"
+  "drone_config": {
+    "coordinate_system": "xyz",
+    "mission_file": "C:\\Users\\Josh\\Desktop\\PhD\\Research\\SiDG-ATRID\\git\\SIDG-ATRID\\scripts\\Drone_control\\xy_coord_data\\mission_data6.json",
+    "drone_type": "DJIS900"
+  },
+  "camera_config": {
+    "camera1": {
+      "type": "StaticCam",
+      "location": {
+        "x": 9225.953536,
+        "y": 27445.019475,
+        "z": 5552.753146
+      },
+      "rotation": {
+        "pitch": 17.383475,
+        "yaw": 98.400001,
+        "roll": 0.000000
+      }
     },
-    "camera_config": {
-        "camera1": {
-            "type": "StaticCam",
-            "location": {
-                "x": 9225.953536,
-                "y": 27445.019475,
-                "z": 5552.753146
-            },
-            "rotation": {
-                "pitch": 17.383475,
-                "yaw": 98.400001,
-                "roll": 0.000000
-            }
-        },
-        "camera2": {
-            "type": "StaticCam",
-            "location": {
-                "x": 7390.001291,
-                "y": 28614.867675,
-                "z": 5365.780453
-            },
-            "rotation": {
-                "pitch": 22.783475,
-                "yaw": 61.800001,
-                "roll": -0.000000
-            }
-        },
-        "camera3": {
-            "type": "StaticCam",
-            "location": {
-                "x": 8976.284766,
-                "y": 33909.202854,
-                "z": 4333.371894
-            },
-            "rotation": {
-                "pitch": 40.183475,
-                "yaw": -85.000001,
-                "roll": -0.000000
-            }
-        },
-        "camera4": {
-            "type": "StaticCam",
-            "location": {
-                "x": 10790.503158,
-                "y": 33293.621827,
-                "z": 4390.478065
-            },
-            "rotation": {
-                "pitch": 40.783475,
-                "yaw": -128.200002,
-                "roll": -0.000000
-            }
-        },
-        "camera5": {
-            "type": "StaticCam",
-            "location": {
-                "x": 9352.026124,
-                "y": 29385.937891,
-                "z": 5156.473244
-            },
-            "rotation": {
-                "pitch": 77.999901,
-                "yaw": -122.599996,
-                "roll": 0.000000
-            }
-        },
-        "camera6": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 700,
-              "y": 0,
-              "z": 0
-            },
-            "rotation": {
-              "pitch": 0,
-              "yaw": 270,
-              "roll": 0
-            }
-          },
-          "camera7": {
-            "type": "AttachDrone",
-            "location": {
-              "x": -700,
-              "y": 0,
-              "z": 0
-            },
-            "rotation": {
-              "pitch": 0,
-              "yaw": 89.99999999999999,
-              "roll": 0
-            }
-          },
-          "camera8": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 0,
-              "y": 700,
-              "z": 0
-            },
-            "rotation": {
-              "pitch": 0,
-              "yaw": 180,
-              "roll": 0
-            }
-          },
-          "camera9": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 0,
-              "y": -700,
-              "z": 0
-            },
-            "rotation": {
-              "pitch": 0,
-              "yaw": 0,
-              "roll": 0
-            }
-          },
-          "camera10": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 0,
-              "y": 0,
-              "z": 700
-            },
-            "rotation": {
-              "pitch": 89.99427042206372,
-              "yaw": 0,
-              "roll": 0
-            }
-          },
-          "camera11": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 0,
-              "y": 0,
-              "z": -700
-            },
-            "rotation": {
-              "pitch": 270.0057295779363,
-              "yaw": 0,
-              "roll": 0
-            }
-          },
-          "camera12": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 494.9747468305833,
-              "y": 494.9747468305833,
-              "z": 0
-            },
-            "rotation": {
-              "pitch": 0,
-              "yaw": 225,
-              "roll": 0
-            }
-          },
-          "camera13": {
-            "type": "AttachDrone",
-            "location": {
-              "x": -494.9747468305833,
-              "y": 494.9747468305833,
-              "z": 0
-            },
-            "rotation": {
-              "pitch": 0,
-              "yaw": 135,
-              "roll": 0
-            }
-          },
-          "camera14": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 494.9747468305833,
-              "y": -494.9747468305833,
-              "z": 0
-            },
-            "rotation": {
-              "pitch": 0,
-              "yaw": 315,
-              "roll": 0
-            }
-          },
-          "camera15": {
-            "type": "AttachDrone",
-            "location": {
-              "x": -494.9747468305833,
-              "y": -494.9747468305833,
-              "z": 0
-            },
-            "rotation": {
-              "pitch": 0,
-              "yaw": 45,
-              "roll": 0
-            }
-          },
-          "camera16": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 494.9747468305833,
-              "y": 0,
-              "z": 494.9747468305833
-            },
-            "rotation": {
-              "pitch": 45.00000000000001,
-              "yaw": 270,
-              "roll": 0
-            }
-          },
-            "camera17": {
-            "type": "AttachDrone",
-            "location": {
-              "x": -494.9747468305833,
-              "y": 0,
-              "z": 494.9747468305833
-            },
-            "rotation": {
-              "pitch": 45.00000000000001,
-              "yaw": 90,
-              "roll": 0
-            }
-          },
-          "camera18": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 0,
-              "y": 494.9747468305833,
-              "z": 494.9747468305833
-            },
-            "rotation": {
-              "pitch": 45.00000000000001,
-              "yaw": 180,
-              "roll": 0
-            }
-          },
-          "camera19": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 0,
-              "y": -494.9747468305833,
-              "z": 494.9747468305833
-            },
-            "rotation": {
-              "pitch": 45.000000000000014,
-              "yaw": 0,
-              "roll": 0
-            }
-          },
-          "camera20": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 494.9747468305833,
-              "y": 0,
-              "z": -494.9747468305833
-            },
-            "rotation": {
-              "pitch": 315,
-              "yaw": 270,
-              "roll": 0
-            }
-          },
-          "camera21": {
-            "type": "AttachDrone",
-            "location": {
-              "x": -494.9747468305833,
-              "y": 0,
-              "z": -494.9747468305833
-            },
-            "rotation": {
-              "pitch": 315,
-              "yaw": 90,
-              "roll": 0
-            }
-          },
-          "camera22": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 0,
-              "y": 494.9747468305833,
-              "z": -494.9747468305833
-            },
-            "rotation": {
-              "pitch": 315,
-              "yaw": 180,
-              "roll": 0
-            }
-          },
-          "camera23": {
-            "type": "AttachDrone",
-            "location": {
-              "x": 0,
-              "y": -494.9747468305833,
-              "z": -494.9747468305833
-            },
-            "rotation": {
-              "pitch": 315,
-              "yaw": 0,
-              "roll": 0
-            }
-          }
-        
+    "camera2": {
+      "type": "StaticCam",
+      "location": {
+        "x": 7390.001291,
+        "y": 28614.867675,
+        "z": 5365.780453
+      },
+      "rotation": {
+        "pitch": 22.783475,
+        "yaw": 61.800001,
+        "roll": -0.000000
+      }
     },
-    "data_collection": {
-        "base_output_dir": "F:/SIDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-v7",
-        "level": "Forest",
-        "time_of_day": [630, 960, 1689, 1785,1958],
-        "focal_length": [10, 50, 100, 500],
-        "frame_rate": 10,
-        "capture_duration": 100000,
-        "max_images": 300,
-        "check_exclusive_mask_color": true
+    "camera3": {
+      "type": "StaticCam",
+      "location": {
+        "x": 8976.284766,
+        "y": 33909.202854,
+        "z": 4333.371894
+      },
+      "rotation": {
+        "pitch": 40.183475,
+        "yaw": -85.000001,
+        "roll": -0.000000
+      }
+    },
+    "camera4": {
+      "type": "StaticCam",
+      "location": {
+        "x": 10790.503158,
+        "y": 33293.621827,
+        "z": 4390.478065
+      },
+      "rotation": {
+        "pitch": 40.783475,
+        "yaw": -128.200002,
+        "roll": -0.000000
+      }
+    },
+    "camera5": {
+      "type": "StaticCam",
+      "location": {
+        "x": 9352.026124,
+        "y": 29385.937891,
+        "z": 5156.473244
+      },
+      "rotation": {
+        "pitch": 77.999901,
+        "yaw": -122.599996,
+        "roll": 0.000000
+      }
+    },
+    "camera6": {
+      "type": "AttachDrone",
+      "location": {
+        "x": 300,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "pitch": 12.346688249754436,
+        "yaw": 4.381712794600617,
+        "roll": 19.715149230792463
+      }
+    },
+    "camera7": {
+      "type": "AttachDrone",
+      "location": {
+        "x": -300,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "pitch": 0.04414352824261414,
+        "yaw": 359.98801129946065,
+        "roll": 344.805837395477
+      }
+    },
+    "camera8": {
+      "type": "AttachDrone",
+      "location": {
+        "x": 0,
+        "y": 300,
+        "z": 0
+      },
+      "rotation": {
+        "pitch": 355.28477408859425,
+        "yaw": 358.6024024982908,
+        "roll": 16.530607745979353
+      }
+    },
+    "camera9": {
+      "type": "AttachDrone",
+      "location": {
+        "x": 0,
+        "y": -300,
+        "z": 0
+      },
+      "rotation": {
+        "pitch": 345.00601898293263,
+        "yaw": 1.7192000602631765,
+        "roll": 353.38250349661223
+      }
+    },
+    "camera10": {
+      "type": "AttachDrone",
+      "location": {
+        "x": 0,
+        "y": 0,
+        "z": 300
+      },
+      "rotation": {
+        "pitch": 346.80489002360554,
+        "yaw": 359.93008236490743,
+        "roll": 0.3062937949927118
+      }
     }
-} 
+  },
+  "data_collection": {
+    "base_output_dir": "F:/SIDG-ATRID-Dataset/Train_set/sidg-atrid-dataset-v8",
+    "level": "Forest",
+    "time_of_day": [630, 960, 1785,1958],
+    "focal_length": [30, 500],
+    "focal_length_ratio": [0.1, 0.9],
+    "frame_rate": 10,
+    "capture_duration": 100000,
+    "max_images": 300,
+    "check_exclusive_mask_color": true
+  }
+}

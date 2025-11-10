@@ -7,17 +7,25 @@ import re
 import traceback
 import argparse
 import math
+import random
+import csv
 from datetime import datetime
 from unrealcv import Client
+import airsim
 from airsim import MultirotorClient
 import threading
+try:
+    from openpyxl import Workbook
+except ImportError:
+    Workbook = None
 
 class ParallelDataCollection:
-    def __init__(self, config_file, width=None, height=None, save_state=False):
+    def __init__(self, config_file, width=None, height=None, save_state=False, camera_config_detail=False):
         # Store resolution settings and state saving flag
         self.width = width
         self.height = height
         self.save_state = save_state
+        self.save_camera_config_detail = camera_config_detail
         
         # Load initial configuration
         with open(config_file, 'r') as f:
@@ -30,6 +38,18 @@ class ParallelDataCollection:
         self.continue_capture = True  # Flag to control capture loop
         self.agent_list_path = "D:/Unreal Projects/ACREDataCollection/AgentList.json" # This path is constant
         self.camera_dirs = {} # Initialize camera_dirs here
+        self.drone_type = self.config.get('drone_config', {}).get('drone_type', 'DJIS900')
+        self.drone_blueprint = f"BP_{self.drone_type}"
+        self.camera_focal_assignments = {}
+        self.camera_resolution_assignments = {}
+        self.current_capture_base_dir = None
+        self.capture_cycle_done = threading.Event()
+        self.capture_cycle_done.set()
+        self.default_resolution = None
+        self.current_resolution = None
+        self.capture_cycle_done = threading.Event()
+        self.capture_cycle_done.set()
+        self.camera_focal_assignments = {}
         
         # Connect to UnrealCV
         print("Connecting to UnrealCV...")
@@ -42,6 +62,10 @@ class ParallelDataCollection:
         if self.width is not None and self.height is not None:
             print(f"Setting resolution to {self.width}x{self.height}")
             self.unrealcv_client.request(f'r.setres {self.width}x{self.height}')
+            self.default_resolution = (int(self.width), int(self.height))
+            self.current_resolution = self.default_resolution
+        else:
+            self.default_resolution = (1920, 1080)
         
         # Register signal handler
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -78,6 +102,8 @@ class ParallelDataCollection:
         
         # Initialize drone type in AirSim settings (this needs to happen before AirSim connection)
         drone_type = self.config['drone_config'].get('drone_type', 'DJIS900')
+        self.drone_type = drone_type
+        self.drone_blueprint = f"BP_{drone_type}"
         self.init_drone_type(drone_type)
         
         # Initialize data collection parameters based on the new config
@@ -99,23 +125,74 @@ class ParallelDataCollection:
         
         # Get focal length settings (default to empty list if not specified)
         self.focal_lengths = self.config['data_collection'].get('focal_length', [])
+        self.focal_length_ratios = self.config['data_collection'].get('focal_length_ratio', [])
+        self.resolutions = self.config['data_collection'].get('resolution', [])
+        self.resolution_ratios = self.config['data_collection'].get('resolution_ratio', [])
         
-    def _prepare_output_directories(self, time_of_day_float, focal_length=None):
+    def _prepare_output_directories(self, time_of_day_float, focal_length=None, camera_focal_assignments=None, camera_resolution_assignments=None):
         # Update current time of day and focal length
         self.current_time_of_day_float = time_of_day_float
         self.current_time_of_day_name = str(time_of_day_float)
         self.current_focal_length = focal_length
+        if camera_focal_assignments:
+            self.camera_focal_assignments = {
+                camera_id: camera_focal_assignments.get(camera_id)
+                for camera_id in self.config['camera_config'].keys()
+            }
+        elif focal_length is not None:
+            self.camera_focal_assignments = {
+                camera_id: focal_length for camera_id in self.config['camera_config'].keys()
+            }
+        else:
+            self.camera_focal_assignments = {
+                camera_id: None for camera_id in self.config['camera_config'].keys()
+            }
+        resolved_default_res = self.default_resolution or (1920, 1080)
+        self.camera_resolution_assignments = {}
+        for camera_id in self.config['camera_config'].keys():
+            res_value = None
+            if camera_resolution_assignments:
+                res_value = camera_resolution_assignments.get(camera_id)
+            if not res_value:
+                res_value = resolved_default_res
+            try:
+                width = int(res_value[0])
+                height = int(res_value[1])
+            except (TypeError, ValueError, IndexError):
+                width, height = resolved_default_res
+            self.camera_resolution_assignments[camera_id] = (width, height)
         
         # Create output directories for each camera under the current time of day and focal length
         self.camera_dirs = {}
+        if focal_length is not None:
+            focal_folder = f"focal_{str(focal_length).replace('.', 'p')}"
+            self.current_capture_base_dir = os.path.join(
+                self.level_output_dir, self.current_time_of_day_name, focal_folder
+            )
+        else:
+            self.current_capture_base_dir = os.path.join(
+                self.level_output_dir, self.current_time_of_day_name
+            )
+        os.makedirs(self.current_capture_base_dir, exist_ok=True)
         for camera_id in self.config['camera_config'].keys():
             camera_num = camera_id.replace('camera', '')
             
             # New structure: base_output_dir/drone_type/level/time_of_day_name/focal_length/camera_#/
-            if focal_length is not None:
-                camera_base_dir = os.path.join(self.level_output_dir, self.current_time_of_day_name, f"focal_{focal_length}", camera_id)
+            focal_folder = None
+            assigned_focal = None
+            if camera_focal_assignments:
+                assigned_focal = camera_focal_assignments.get(camera_id)
+            elif focal_length is not None:
+                assigned_focal = focal_length
+
+            if assigned_focal is not None:
+                focal_str = str(assigned_focal).replace('.', 'p')
+                focal_folder = f"focal_{focal_str}"
+
+            if focal_folder:
+                camera_base_dir = os.path.join(self.level_output_dir, self.current_time_of_day_name, focal_folder, camera_id)
             else:
-                camera_base_dir = os.path.join(self.level_output_dir, self.current_time_of_day_name, camera_id)
+                camera_base_dir = os.path.join(self.current_capture_base_dir, camera_id)
             
             # Set up directories for this camera
             self.camera_dirs[camera_id] = {
@@ -140,7 +217,13 @@ class ParallelDataCollection:
 
         # Get the starting frame index based on existing files in the current directory
         self.frame_index = self._get_max_frame_index()
-        focal_info = f" focal_{focal_length}" if focal_length is not None else ""
+        if camera_focal_assignments:
+            focal_summary = ", ".join(
+                f"{cam}:{val}" for cam, val in list(camera_focal_assignments.items())[:5]
+            )
+            focal_info = f" focal_assignments({focal_summary}{'...' if len(camera_focal_assignments) > 5 else ''})"
+        else:
+            focal_info = f" focal_{focal_length}" if focal_length is not None else ""
         print(f"Starting data collection from frame index: {self.frame_index} for {self.current_time_of_day_name}{focal_info} in {self.config['data_collection']['level']}")
 
     def _signal_handler(self, sig, frame):
@@ -149,6 +232,40 @@ class ParallelDataCollection:
         self.continue_capture = False
         time.sleep(1)  # Give a moment for threads to clean up
         os._exit(0)  # Force immediate exit
+
+    def _safe_request(self, command, timeout=10):
+        """Execute a UnrealCV request in a thread-safe, timeout-aware manner."""
+        if self.shutting_down:
+            print(f"[INFO] Skipping request '{command}' because shutdown is in progress.")
+            return None
+
+        result = {'value': None}
+        exception = {'value': None}
+
+        def make_request():
+            try:
+                result['value'] = self.unrealcv_client.request(command)
+            except Exception as e:
+                exception['value'] = e
+
+        request_thread = threading.Thread(target=make_request)
+        request_thread.daemon = True
+        request_thread.start()
+
+        start_time = time.time()
+        while request_thread.is_alive():
+            if self.shutting_down:
+                print(f"[INFO] Request '{command}' aborted due to shutdown.")
+                return None
+            if time.time() - start_time > timeout:
+                print(f"[ERROR] Request '{command}' timed out after {timeout} seconds")
+                return None
+            time.sleep(0.1)
+
+        if exception['value'] is not None:
+            raise exception['value']
+
+        return result['value']
 
     def _get_max_frame_index(self):
         """Find the highest frame index from existing files across all cameras."""
@@ -246,130 +363,341 @@ class ParallelDataCollection:
         # Resume simulation
         self.unrealcv_client.request('vset /action/game/resume')
 
+    def _setup_static_camera(self, camera_num, camera_config):
+        """Configure location and rotation for a static camera based on configuration."""
+        location = camera_config.get("location")
+        if location:
+            loc_cmd = (
+                f"vset /camera/{camera_num}/location "
+                f"{float(location.get('x', 0.0)):.6f} "
+                f"{float(location.get('y', 0.0)):.6f} "
+                f"{float(location.get('z', 0.0)):.6f}"
+            )
+            loc_resp = self._safe_request(loc_cmd, timeout=5)
+            verify_loc = self._safe_request(f"vget /camera/{camera_num}/location", timeout=5)
+            print(f"[INFO] Set location for camera {camera_num}: {loc_resp} (verify: {verify_loc})")
+        else:
+            print(f"[WARNING] Static camera {camera_num} missing location data.")
+            verify_loc = None
+
+        rotation = camera_config.get("rotation")
+        if rotation:
+            rot_cmd = (
+                f"vset /camera/{camera_num}/rotation "
+                f"{float(rotation.get('pitch', 0.0)):.6f} "
+                f"{float(rotation.get('yaw', 0.0)):.6f} "
+                f"{float(rotation.get('roll', 0.0)):.6f}"
+            )
+            rot_resp = self._safe_request(rot_cmd, timeout=5)
+            verify_rot = self._safe_request(f"vget /camera/{camera_num}/rotation", timeout=5)
+            print(f"[INFO] Set rotation for camera {camera_num}: {rot_resp} (verify: {verify_rot})")
+        else:
+            print(f"[WARNING] Static camera {camera_num} missing rotation data.")
+            verify_rot = None
+
+        return verify_loc, verify_rot
+
     def setup_all_cameras(self):
         """Set up all cameras at once."""
         print("Setting up all cameras...")
         
         # Ensure simulation is running for camera setup
-        if self.unrealcv_client.request('vget /action/game/is_paused') == 'true':
+        if self._safe_request('vget /action/game/is_paused', timeout=5) == 'true':
             self.unrealcv_client.request('vset /action/game/resume')
             print("Resumed simulation for camera setup")
         
         # Debug: Check available cameras before setup
-        camera_list_before = self.unrealcv_client.request('vget /cameras')
+        camera_list_before = self._safe_request('vget /cameras', timeout=5)
         print(f"Available cameras before setup: {camera_list_before}")
         
         # Set up each camera
         for camera_id, camera_config in self.config['camera_config'].items():
             # Convert camera_id to numeric ID (e.g., 'camera1' -> 1)
             camera_num = int(camera_id.replace('camera', ''))
+            camera_type = camera_config.get('type', '').lower()
+            attached_to_drone = camera_config.get('attached_to_drone', False)
+            is_attached_type = camera_type in {'attachdrone', 'attachcamera', 'attach_cam', 'attach'} or attached_to_drone
+            camera_type_display = camera_config.get('type', 'StaticCam' if not is_attached_type else 'AttachDrone')
             
-            print(f"\n=== Setting up {camera_id} (camera {camera_num}) ===")
+            print(f"\n=== Setting up {camera_id} (camera {camera_num}, type: {camera_type_display}) ===")
             
             # Spawn and configure the camera
             print(f"Spawning camera {camera_num}...")
-            spawn_result1 = self.unrealcv_client.request('vset /cameras/spawn')
-            spawn_result2 = self.unrealcv_client.request('vset /cameras/spawn')
+            spawn_result1 = self._safe_request('vset /cameras/spawn', timeout=5)
+            spawn_result2 = self._safe_request('vset /cameras/spawn', timeout=5)
             print(f"Spawn results for camera {camera_num}: {spawn_result1}, {spawn_result2}")
             
             # Wait a moment for camera to be fully spawned
             time.sleep(0.5)
             
             # Verify camera exists
-            camera_list_current = self.unrealcv_client.request('vget /cameras')
+            camera_list_current = self._safe_request('vget /cameras', timeout=5)
             print(f"Available cameras after spawn: {camera_list_current}")
             
-            attached_to_drone = camera_config.get('attached_to_drone', False)
-
-            if attached_to_drone:
+            if is_attached_type:
                 self._attach_camera_to_drone(camera_num, camera_config)
                 print(f"=== {camera_id} setup complete (attached to drone) ===")
-                print(f"Relative offset: {camera_config.get('relative_offset', {})}")
-                print(f"Relative rotation: {camera_config.get('rotation', {})}")
+                print(f"Configured offset: {camera_config.get('location', {})}")
+                print(f"Rotation offsets: {camera_config.get('rotation', {})}")
                 print()
             else:
-                location = camera_config.get("location")
-                if not location:
-                    print(f"Warning: {camera_id} missing 'location' for static setup. Skipping position set.")
-                else:
-                    # Set camera location
-                    location_cmd = (
-                        f"vset /camera/{camera_num}/location "
-                        f"{location['x']} {location['y']} {location['z']}"
-                    )
-                    location_result = self.unrealcv_client.request(location_cmd)
-                    print(f"Location command: {location_cmd}")
-                    print(f"Location result: {location_result}")
-
-                    # Verify location was set
-                    verify_location = self.unrealcv_client.request(f'vget /camera/{camera_num}/location')
-                    print(f"Verified location: {verify_location}")
-
-                # Set camera rotation (format numbers to avoid scientific notation)
-                rotation = camera_config.get("rotation", {})
-                pitch = float(rotation.get("pitch", 0.0))
-                yaw = float(rotation.get("yaw", 0.0))
-                roll = float(rotation.get("roll", 0.0))
-                rotation_cmd = f'vset /camera/{camera_num}/rotation {pitch:.6f} {yaw:.6f} {roll:.6f}'
-                rotation_result = self.unrealcv_client.request(rotation_cmd)
-                print(f"Rotation command: {rotation_cmd}")
-                print(f"Rotation result: {rotation_result}")
-
-                # Verify rotation was set
-                verify_rotation = self.unrealcv_client.request(f'vget /camera/{camera_num}/rotation')
-                print(f"Verified rotation: {verify_rotation}")
-
-                # Also try setting rotation again if it didn't work the first time
-                if verify_rotation == "0.000000 0.000000 0.000000" or not verify_rotation or verify_rotation == 'error':
-                    print(f"Rotation not applied correctly, trying again...")
-                    time.sleep(0.2)
-                    # Use the same formatted command
-                    rotation_result2 = self.unrealcv_client.request(rotation_cmd)
-                    print(f"Second rotation attempt result: {rotation_result2}")
-                    verify_rotation2 = self.unrealcv_client.request(f'vget /camera/{camera_num}/rotation')
-                    print(f"Verified rotation after second attempt: {verify_rotation2}")
-
+                verify_location, verify_rotation = self._setup_static_camera(camera_num, camera_config)
                 print(f"=== {camera_id} setup complete ===")
-                if location:
-                    print(f"Target location: {location}")
+                location_cfg = camera_config.get("location")
+                rotation_cfg = camera_config.get("rotation", {})
+                if location_cfg:
+                    print(f"Target location: {location_cfg}")
                     print(f"Actual location: {verify_location}")
-                print(f"Target rotation: {rotation}")
-                print(f"Actual rotation: {verify_rotation}")
+                if rotation_cfg:
+                    print(f"Target rotation: {rotation_cfg}")
+                    print(f"Actual rotation: {verify_rotation}")
                 print()
         
         # Debug: Check available cameras after setup
-        camera_list_after = self.unrealcv_client.request('vget /cameras')
+        camera_list_after = self._safe_request('vget /cameras', timeout=5)
         print(f"Available cameras after setup: {camera_list_after}")
         print("All cameras set up successfully")
 
     def _attach_camera_to_drone(self, camera_num, camera_config):
-        """Attach a spawned camera to the drone using a relative offset and fixed rotation."""
-        offset = camera_config.get('relative_offset')
+        """Attach a spawned camera to the drone using offset-based auto-aim with optional rotation offsets."""
+        offset = camera_config.get('location')
         if offset is None:
-            print(f"Warning: camera {camera_num} missing 'relative_offset' for attachment. Skipping attach command.")
+            offset = camera_config.get('relative_offset')
+
+        if offset is None:
+            print(f"[WARNING] Camera {camera_num} missing offset data for attachment. Skipping attach command.")
             return
 
-        rotation = camera_config.get('rotation', {})
-        pitch = float(rotation.get('pitch', 0.0))
-        yaw = float(rotation.get('yaw', 0.0))
-        roll = float(rotation.get('roll', 0.0))
+        offset_x = float(offset.get('x', 0.0))
+        offset_y = float(offset.get('y', 0.0))
+        offset_z = float(offset.get('z', 0.0))
 
-        attach_cmd = (
-            f"vrun ce cameraattach {camera_num} "
-            f"{float(offset.get('x', 0.0)):.6f} "
-            f"{float(offset.get('y', 0.0)):.6f} "
-            f"{float(offset.get('z', 0.0)):.6f} "
-            f"{pitch:.6f} {yaw:.6f} {roll:.6f}"
+        # Compute base yaw facing back toward the drone (origin)
+        yaw_unreal = math.degrees(math.atan2(-offset_y, -offset_x))
+        base_yaw = (yaw_unreal + 360.0) % 360.0
+
+        # Compute base pitch to look toward the drone (origin)
+        horizontal_dist = math.hypot(offset_x, offset_y)
+        pitch_unreal = -math.degrees(math.atan2(offset_z, horizontal_dist))
+        base_pitch = (pitch_unreal + 360.0) % 360.0
+
+        base_roll = 0.0
+
+        rotation_offsets = camera_config.get('rotation', {})
+        yaw_offset = float(rotation_offsets.get('yaw', 0.0))
+        pitch_offset = float(rotation_offsets.get('pitch', 0.0))
+        roll_offset = float(rotation_offsets.get('roll', 0.0))
+
+        def normalize_angle(angle):
+            angle = math.fmod(angle, 360.0)
+            if angle < 0:
+                angle += 360.0
+            return angle
+
+        yaw = normalize_angle(base_yaw + yaw_offset)
+        pitch = normalize_angle(base_pitch + pitch_offset)
+        roll = normalize_angle(base_roll + roll_offset)
+
+        print(
+            f"[DEBUG] Auto-aim orientation for camera {camera_num}: "
+            f"yaw={base_yaw:.3f}, pitch={base_pitch:.3f}, roll={base_roll:.3f}"
+        )
+        print(
+            f"[DEBUG] Applying rotation offsets (yaw={yaw_offset:.3f}, "
+            f"pitch={pitch_offset:.3f}, roll={roll_offset:.3f})"
+        )
+        print(
+            f"[INFO] Final rotation for camera {camera_num}: "
+            f"yaw={yaw:.3f}, pitch={pitch:.3f}, roll={roll:.3f}"
         )
 
-        # TODO: Update the Unreal Engine blueprint handler to process `cameraattach` and reparent the camera to Drone1.
+        blueprint_name = self.drone_blueprint or f"BP_{self.drone_type or 'DJIS900'}"
 
+        attach_cmd = (
+            f"vrun ce cameraattach {camera_num} {blueprint_name} "
+            f"{offset_x:.6f} {offset_y:.6f} {offset_z:.6f}"
+            f" {yaw:.6f} {pitch:.6f} {roll:.6f}"
+        )
+
+        print(f"[INFO] Executing attach command: {attach_cmd}")
+        resp = self._safe_request(attach_cmd, timeout=5)
+        print(f"[INFO] Attach command response for camera {camera_num}: {resp}")
+
+        # Verify the attachment
+        time.sleep(0.3)
+        verify_loc = self._safe_request(f"vget /camera/{camera_num}/location", timeout=5)
+        verify_rot = self._safe_request(f"vget /camera/{camera_num}/rotation", timeout=5)
+        print(f"[INFO] Post-attach location for camera {camera_num}: {verify_loc}")
+        print(f"[INFO] Post-attach rotation for camera {camera_num}: {verify_rot}")
+
+    def _assign_focal_lengths_to_cameras(self):
+        """Randomly assign focal lengths to cameras based on configured ratios."""
+        if not self.focal_lengths:
+            return {}
+
+        if not self.focal_length_ratios or len(self.focal_length_ratios) != len(self.focal_lengths):
+            print("[WARNING] Focal length ratios missing or mismatched. Using uniform distribution.")
+            weights = [1.0 for _ in self.focal_lengths]
+        else:
+            ratio_sum = sum(self.focal_length_ratios)
+            if ratio_sum <= 0:
+                print("[WARNING] Focal length ratios sum to zero. Using uniform distribution.")
+                weights = [1.0 for _ in self.focal_lengths]
+            else:
+                weights = [r / ratio_sum for r in self.focal_length_ratios]
+
+        camera_ids = list(self.config['camera_config'].keys())
+        assignments = {}
+        stats = {fl: 0 for fl in self.focal_lengths}
+
+        for camera_id in camera_ids:
+            chosen = random.choices(self.focal_lengths, weights=weights, k=1)[0]
+            assignments[camera_id] = chosen
+            stats[chosen] = stats.get(chosen, 0) + 1
+
+        self.camera_focal_assignments = assignments
+        print("[INFO] Focal length assignments (camera count per focal length):")
+        for focal_value, count in stats.items():
+            print(f"  - {focal_value}: {count} cameras")
+        return assignments
+
+    def _assign_resolutions_to_cameras(self):
+        """Assign resolutions to cameras based on configuration ratios."""
+        camera_ids = list(self.config['camera_config'].keys())
+        assignments = {}
+
+        if not self.resolutions:
+            default_res = self.default_resolution or (1920, 1080)
+            default_width = int(default_res[0])
+            default_height = int(default_res[1])
+            for camera_id in camera_ids:
+                assignments[camera_id] = (default_width, default_height)
+            return assignments
+
+        def _normalize_resolution(value):
+            try:
+                width, height = int(value[0]), int(value[1])
+                return (width, height)
+            except (TypeError, ValueError, IndexError):
+                return self.default_resolution or (1920, 1080)
+
+        valid_ratios = (
+            self.resolution_ratios
+            and len(self.resolution_ratios) == len(self.resolutions)
+            and sum(self.resolution_ratios) > 0
+        )
+
+        if not valid_ratios:
+            print("[WARNING] Resolution ratios missing or invalid. Defaulting all cameras to 1920x1080.")
+            default_res = self.default_resolution or (1920, 1080)
+            default_width = int(default_res[0])
+            default_height = int(default_res[1])
+            for camera_id in camera_ids:
+                assignments[camera_id] = (default_width, default_height)
+            return assignments
+
+        ratio_sum = sum(self.resolution_ratios)
+        weights = [r / ratio_sum for r in self.resolution_ratios]
+        stats = {}
+
+        for camera_id in camera_ids:
+            chosen = random.choices(self.resolutions, weights=weights, k=1)[0]
+            resolution = _normalize_resolution(chosen)
+            assignments[camera_id] = resolution
+            stats[resolution] = stats.get(resolution, 0) + 1
+
+        print("[INFO] Resolution assignments (camera count per resolution):")
+        for resolution, count in stats.items():
+            print(f"  - {resolution[0]}x{resolution[1]}: {count} cameras")
+
+        return assignments
+
+    def _set_camera_focal_lengths(self, assignments, focal_range=200.0):
+        """Apply focal length assignments to each camera."""
+        if not assignments:
+            return
+
+        for camera_id, focal_value in assignments.items():
+            camera_num = int(camera_id.replace('camera', ''))
+            focal_cmd = f'vset /camera/{camera_num}/focal {focal_value} {focal_range}'
+            result = self.unrealcv_client.request(focal_cmd)
+            print(f"Camera {camera_num} focal length set to {focal_value}: {result}")
+
+        time.sleep(1)
+        print(f"Applied focal length assignments to {len(assignments)} cameras.")
+
+    def _apply_resolution(self, resolution):
+        """Apply the desired resolution if different from current."""
+        if not resolution:
+            resolution = self.default_resolution or (1920, 1080)
+        width = int(resolution[0])
+        height = int(resolution[1])
+        if self.current_resolution == (width, height):
+            return
         try:
-            print(f"Attach command: {attach_cmd}")
-            attach_result = self.unrealcv_client.request(attach_cmd)
-            print(f"Attach result: {attach_result}")
+            self.unrealcv_client.request(f'r.setres {width}x{height}')
+            self.current_resolution = (width, height)
         except Exception as e:
-            print(f"Error sending attach command for camera {camera_num}: {e}")
+            print(f"[WARNING] Failed to set resolution {width}x{height}: {e}")
+
+    def _write_camera_assignment_report(self):
+        """Write camera assignment information (focal length, resolution) to an Excel or CSV file."""
+        if not self.current_capture_base_dir:
+            return
+
+        headers = [
+            "Camera",
+            "Type",
+            "TimeOfDay",
+            "FocalLength",
+            "ResolutionWidth",
+            "ResolutionHeight"
+        ]
+
+        rows = []
+        for camera_id, camera_config in self.config['camera_config'].items():
+            cam_type = camera_config.get('type', '')
+            focal_value = self.camera_focal_assignments.get(camera_id)
+            resolution = self.camera_resolution_assignments.get(camera_id, self.default_resolution or (1920, 1080))
+            rows.append([
+                camera_id,
+                cam_type,
+                self.current_time_of_day_name,
+                focal_value if focal_value is not None else "",
+                int(resolution[0]),
+                int(resolution[1]),
+            ])
+
+        report_path_base = os.path.join(self.current_capture_base_dir, f"camera_assignments")
+
+        if not self.save_camera_config_detail:
+            return
+
+        if Workbook is not None:
+            try:
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Assignments"
+                ws.append(headers)
+                for row in rows:
+                    ws.append(row)
+                excel_path = f"{report_path_base}.xlsx"
+                wb.save(excel_path)
+                print(f"[INFO] Saved camera assignment report: {excel_path}")
+                return
+            except Exception as e:
+                print(f"[WARNING] Failed to write Excel assignment report: {e}")
+
+        # Fallback to CSV
+        try:
+            csv_path = f"{report_path_base}.csv"
+            with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(headers)
+                writer.writerows(rows)
+            print(f"[INFO] Saved camera assignment report (CSV): {csv_path}")
+        except Exception as e:
+            print(f"[WARNING] Failed to write camera assignment report: {e}")
 
     def _initialize_drone(self):
         """Initialize drone and store initial position"""
@@ -430,12 +758,15 @@ class ParallelDataCollection:
         self.airsim_client.rotateToYawAsync(target_yaw).join()
         
         # Then move to the waypoint
-        self.airsim_client.moveToPositionAsync(
+        move_future = self.airsim_client.moveToPositionAsync(
             x=x,
             y=y,
             z=z,
-            velocity=velocity
-        ).join()
+            velocity=velocity,
+            drivetrain=airsim.DrivetrainType.ForwardOnly,
+            yaw_mode=airsim.YawMode(is_rate=False, yaw_or_rate=target_yaw)
+        )
+        move_future.join()
 
     def _calculate_yaw_to_waypoint(self, current_x, current_y, target_x, target_y):
         """Calculate the yaw angle (in degrees) needed to face the target waypoint"""
@@ -706,11 +1037,13 @@ class ParallelDataCollection:
     def capture_frames_parallel(self):
         """Capture RGB and object mask frames from all cameras in parallel."""
         start_time = time.time()
+        frame_interval = 1.0 / self.frame_rate if self.frame_rate > 0 else 0.1  # Time the simulation runs between captures
         
-        print(f"Starting parallel capture for all cameras, max images: {self.max_images}")
+        print(f"Starting parallel capture for all cameras, max images: {self.max_images}, frame rate: {self.frame_rate} fps (interval: {frame_interval:.3f}s)")
         
         # Main capture loop
         while self.continue_capture and self.frame_index < self.max_images and (time.time() - start_time) < self.capture_duration:
+            self.capture_cycle_done.clear()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
             # Pause simulation
@@ -719,6 +1052,8 @@ class ParallelDataCollection:
             # Capture images from all cameras
             for camera_id in self.config['camera_config'].keys():
                 camera_num = int(camera_id.replace('camera', ''))
+                assigned_resolution = self.camera_resolution_assignments.get(camera_id)
+                self._apply_resolution(assigned_resolution)
                 
                 # Capture and save object mask image
                 mask_filename = f"{self.frame_index}_{timestamp}_{camera_id}_object_mask.png"
@@ -729,6 +1064,12 @@ class ParallelDataCollection:
                 rgb_filename = f"{self.frame_index}_{timestamp}_{camera_id}_lit.png"
                 rgb_path = os.path.join(self.camera_dirs[camera_id]['rgb'], rgb_filename)
                 self.unrealcv_client.request(f'vget /camera/{camera_num}/lit {rgb_path}')
+                
+                print(
+                    f"[CAPTURE] Frame {self.frame_index} | {camera_id} "
+                    f"(ID {camera_num}) -> RGB: {os.path.basename(rgb_filename)}, "
+                    f"Mask: {os.path.basename(mask_filename)}"
+                )
                 
                 # Save state data if enabled
                 if self.save_state:
@@ -746,6 +1087,11 @@ class ParallelDataCollection:
             
             # Resume simulation
             self.unrealcv_client.request('vset /action/game/resume')
+            
+            # Allow the simulation to run between captures
+            if frame_interval > 0:
+                time.sleep(frame_interval)
+            self.capture_cycle_done.set()
         
         # Determine why we stopped
         if self.frame_index >= self.max_images:
@@ -765,6 +1111,7 @@ class ParallelDataCollection:
             print(f"  Mask: {dirs['mask']} ({self.frame_index} images)")
             if self.save_state:
                 print(f"  State: {dirs['state']} ({self.frame_index} JSON files)")
+        self.capture_cycle_done.set()
 
     def _execute_mission(self):
         """Execute the drone mission based on the coordinate system"""
@@ -787,6 +1134,8 @@ class ParallelDataCollection:
         
         # Navigate through waypoints
         for i, waypoint in enumerate(waypoints):
+            if not self.capture_cycle_done.wait(timeout=30):
+                print("[WARNING] Capture cycle did not complete within 30 seconds. Continuing mission.")
             print(f"\nNavigating to waypoint {waypoint['number']} of {len(waypoints)}")
             
             # Use waypoint speed if specified, otherwise default to 5 m/s
@@ -848,6 +1197,7 @@ class ParallelDataCollection:
         self.continue_capture = False
         # Ensure simulation is running
         self.unrealcv_client.request('vset /action/game/resume')
+        self.capture_cycle_done.set()
 
     def run(self, config_files):
         """Run the parallel data collection process for multiple levels and times of day"""
@@ -872,20 +1222,35 @@ class ParallelDataCollection:
             for time_value in time_of_day_values:
                 print(f"\n--- Starting data collection for {current_level} at time {time_value} ---")
                 self._set_weather(time_value)
+                resolution_assignments = self._assign_resolutions_to_cameras()
                 
                 # Handle focal length iterations
-                if self.focal_lengths:  # If focal lengths are specified
-                    for focal_length in self.focal_lengths:
-                        print(f"\n--- Setting focal length {focal_length}cm for time {time_value} ---")
-                        self.continue_capture = True # Reset capture flag for each new focal length
-                        self._prepare_output_directories(time_value, focal_length)
+                if self.focal_lengths:
+                    has_valid_ratios = (
+                        self.focal_length_ratios
+                        and len(self.focal_length_ratios) == len(self.focal_lengths)
+                        and sum(self.focal_length_ratios) > 0
+                    )
+
+                    if has_valid_ratios:
+                        assignments = self._assign_focal_lengths_to_cameras()
+                        self.continue_capture = True  # Reset capture flag
+                        self._prepare_output_directories(
+                            time_value,
+                            camera_focal_assignments=assignments,
+                            camera_resolution_assignments=resolution_assignments,
+                        )
+                        self._write_camera_assignment_report()
                         # Get and save agent colors
                         self.get_agent_colors(agent_list)
-                        # Set focal length for all cameras
-                        self._set_focal_length(focal_length)
-                        
+                        # Set focal length per camera
+                        self._set_camera_focal_lengths(assignments)
+
                         if airsim_available:
                             print("Running in full drone + parallel capture mode")
+                            # Ensure simulation is running before starting mission
+                            self.unrealcv_client.request('vset /action/game/resume')
+                            time.sleep(0.5)  # Brief pause to ensure resume takes effect
                             self._initialize_drone()
                             self._takeoff()
                             # Start capture thread
@@ -898,23 +1263,70 @@ class ParallelDataCollection:
                             # Wait for capture thread to finish
                             if capture_thread.is_alive():
                                 capture_thread.join(timeout=10)
-                            # Land and reset after each focal length
+                            # Land and reset after each time of day
                             self._land_and_reset()
                         else:
                             print("AirSim not available. Running in capture-only mode.")
                             # Just run the capture function directly
                             self.capture_frames_parallel()
-                        print(f"--- Completed data collection for focal length {focal_length}cm ---")
-                        time.sleep(3) # Short pause before next focal length
+                        print(f"--- Completed data collection with randomized focal assignments for time {time_value} ---")
+                        time.sleep(3)  # Short pause before next iteration
+                    else:
+                        for focal_length in self.focal_lengths:
+                            print(f"\n--- Setting focal length {focal_length}cm for time {time_value} ---")
+                            self.continue_capture = True # Reset capture flag for each new focal length
+                            self._prepare_output_directories(
+                                time_value,
+                                focal_length=focal_length,
+                                camera_resolution_assignments=resolution_assignments,
+                            )
+                            self._write_camera_assignment_report()
+                            # Get and save agent colors
+                            self.get_agent_colors(agent_list)
+                            # Set focal length for all cameras
+                            self._set_focal_length(focal_length)
+                            
+                            if airsim_available:
+                                print("Running in full drone + parallel capture mode")
+                                # Ensure simulation is running before starting mission
+                                self.unrealcv_client.request('vset /action/game/resume')
+                                time.sleep(0.5)  # Brief pause to ensure resume takes effect
+                                self._initialize_drone()
+                                self._takeoff()
+                                # Start capture thread
+                                capture_thread = threading.Thread(target=self.capture_frames_parallel)
+                                capture_thread.start()
+                                # Execute mission
+                                self._execute_mission()
+                                # Stop capture
+                                self._stop_capture()
+                                # Wait for capture thread to finish
+                                if capture_thread.is_alive():
+                                    capture_thread.join(timeout=10)
+                                # Land and reset after each focal length
+                                self._land_and_reset()
+                            else:
+                                print("AirSim not available. Running in capture-only mode.")
+                                # Just run the capture function directly
+                                self.capture_frames_parallel()
+                            print(f"--- Completed data collection for focal length {focal_length}cm ---")
+                            time.sleep(3) # Short pause before next focal length
                 else:  # No focal lengths specified, use default
                     print(f"\n--- Using default focal length for time {time_value} ---")
                     self.continue_capture = True # Reset capture flag for each new time of day
-                    self._prepare_output_directories(time_value)
+                    self._prepare_output_directories(
+                        time_value,
+                        camera_resolution_assignments=resolution_assignments,
+                    )
+                    self._write_camera_assignment_report()
                     # Get and save agent colors
                     self.get_agent_colors(agent_list)
                     
                     if airsim_available:
                         print("Running in full drone + parallel capture mode")
+                        # Ensure simulation is running before starting mission
+                        self.unrealcv_client.request('vset /action/game/resume')
+                        time.sleep(0.5)  # Brief pause to ensure resume takes effect
                         self._initialize_drone()
                         self._takeoff()
                         # Start capture thread
@@ -1005,17 +1417,18 @@ if __name__ == "__main__":
                         help='Set resolution width and height (e.g., --setres 1080 720)')
     parser.add_argument('--state', action='store_true',
                         help='Enable state saving - save drone and camera ground truth data to text files')
+    parser.add_argument('--camera-config-detail', action='store_true',
+                        help='Save per-camera focal length and resolution assignments to an Excel/CSV report')
     
     args = parser.parse_args()
     
-    # Define the list of configuration files to process
+    # Define the list of configuration files to process using raw strings to avoid unicode escape errors
     config_files_to_process = [
-         
-        "C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-city.json",
-        "C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-forest-test4.json",
-        "C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-lake.json",
-        "C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-river.json",
-        "C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-rural.json",
+        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-forest-test3.json",
+        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-lake.json",
+        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-river.json",
+        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-rural.json",
+        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-city.json",
     ]
 
     try:
@@ -1025,9 +1438,19 @@ if __name__ == "__main__":
 
         if args.setres:
             width, height = args.setres
-            data_collection = ParallelDataCollection(initial_config_for_setup, width=width, height=height, save_state=args.state)
+            data_collection = ParallelDataCollection(
+                initial_config_for_setup,
+                width=width,
+                height=height,
+                save_state=args.state,
+                camera_config_detail=args.camera_config_detail,
+            )
         else:
-            data_collection = ParallelDataCollection(initial_config_for_setup, save_state=args.state)
+            data_collection = ParallelDataCollection(
+                initial_config_for_setup,
+                save_state=args.state,
+                camera_config_detail=args.camera_config_detail,
+            )
         
         # Print state saving status
         if args.state:

@@ -11,7 +11,7 @@ import math
 
 BASE_SAVE_DIR = r"F:\SIDG-ATRID-Dataset\Train_set\test"
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config", "bo_config-city.json")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config", "bo_config-forest-test3.json")
 
 # Allowed characters for directory and file names
 _SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9_\-]+")
@@ -250,7 +250,6 @@ def attach_camera_to_drone(client: Client, camera_id: int, camera_config: dict, 
     Example: vrun ce cameraattach 1 BP_DJIS900 200 10 50 0 -10 0
     """
     offset = camera_config.get("location", {})
-    rotation = camera_config.get("rotation", {})
 
     offset_x = float(offset.get("x", 0.0))
     offset_y = float(offset.get("y", 0.0))
@@ -261,7 +260,7 @@ def attach_camera_to_drone(client: Client, camera_id: int, camera_config: dict, 
     # from a camera at offset (x, y, z) toward the drone at the origin is:
     # Yaw (deg) = atan2(-y, -x) (convert to degrees, wrap to 0–360)
     yaw_unreal = math.degrees(math.atan2(-offset_y, -offset_x))
-    yaw = (yaw_unreal + 360.0) % 360.0
+    base_yaw = (yaw_unreal + 360.0) % 360.0
 
     # compute pitch that actually faces the drone from this offset
     # Pitch (deg) = -atan2(z, sqrt(x^2 + y^2)) (negative because we look toward origin)
@@ -269,10 +268,38 @@ def attach_camera_to_drone(client: Client, camera_id: int, camera_config: dict, 
     # For camera above (z > 0): pitch should be negative (look down)
     horizontal_dist = math.hypot(offset_x, offset_y)
     pitch_unreal = -math.degrees(math.atan2(offset_z, horizontal_dist))
-    pitch = pitch_unreal
-
-    # keep the provided roll from config
-    roll = float(rotation.get("roll", 0.0))
+    base_pitch = (pitch_unreal + 360.0) % 360.0
+    
+    # base roll when auto-aiming directly at the drone
+    base_roll = 0.0
+    
+    rotation = camera_config.get("rotation", {})
+    yaw_offset = float(rotation.get("yaw", 0.0))
+    pitch_offset = float(rotation.get("pitch", 0.0))
+    roll_offset = float(rotation.get("roll", 0.0))
+    
+    def normalize_angle(angle: float) -> float:
+        angle = math.fmod(angle, 360.0)
+        if angle < 0:
+            angle += 360.0
+        return angle
+    
+    yaw = normalize_angle(base_yaw + yaw_offset)
+    pitch = normalize_angle(base_pitch + pitch_offset)
+    roll = normalize_angle(base_roll + roll_offset)
+    
+    print(
+        f"[DEBUG] Auto-aim orientation for camera {camera_id}: "
+        f"yaw={base_yaw:.3f}, pitch={base_pitch:.3f}, roll={base_roll:.3f}"
+    )
+    print(
+        f"[DEBUG] Applying rotation offsets (yaw={yaw_offset:.3f}, "
+        f"pitch={pitch_offset:.3f}, roll={roll_offset:.3f})"
+    )
+    print(
+        f"[INFO] Final rotation for camera {camera_id}: "
+        f"yaw={yaw:.3f}, pitch={pitch:.3f}, roll={roll:.3f}"
+    )
 
     attach_cmd = (
         f"vrun ce cameraattach {camera_id} {blueprint_name} "
