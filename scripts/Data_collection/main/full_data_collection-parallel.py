@@ -71,29 +71,32 @@ class ParallelDataCollection:
         signal.signal(signal.SIGINT, self._signal_handler)
 
     def _connect_airsim(self):
-        self.airsim_client = None
-        try:
-            print("Connecting to AirSim for current level...")
-            self.airsim_client = MultirotorClient()
-            max_retries = 10
-            retry_delay = 3  # seconds
-            for attempt in range(max_retries):
-                try:
-                    print(f"AirSim connection attempt {attempt+1}/{max_retries}")
-                    self.airsim_client.confirmConnection()
-                    print("Successfully connected to AirSim for current level")
-                    break
-                except Exception as e:
-                    print(f"Failed to connect to AirSim for current level: {e}")
-                    if attempt < max_retries - 1:
-                        print(f"Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                    else:
-                        print("AirSim connection failed for current level. Will run in capture-only mode.")
-                        self.airsim_client = None
-        except Exception as e:
-            print(f"Error setting up AirSim for current level: {e}")
+        if self.airsim_client:
+            print("Discarding existing AirSim client before reconnecting...")
             self.airsim_client = None
+        retry_delay = 3  # seconds
+        attempt = 0
+
+        print("Connecting to AirSim for current level (will keep trying until available)...")
+        while not self.shutting_down:
+            attempt += 1
+            try:
+                print(f"AirSim connection attempt {attempt}")
+                client = MultirotorClient()
+                client.confirmConnection()
+                self.airsim_client = client
+                print("Successfully connected to AirSim for current level")
+                return True
+            except Exception as e:
+                print(f"Failed to connect to AirSim for current level: {e}")
+                self.airsim_client = None
+                if self.shutting_down:
+                    break
+                print(f"AirSim not available. Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+
+        print("AirSim connection aborted due to shutdown.")
+        return False
 
     def _setup_run_parameters(self, config_file):
         # Load configuration for the current run
@@ -1208,7 +1211,10 @@ class ParallelDataCollection:
             current_level = self.config['data_collection']['level']
             if i > 0: # If it's not the very first configuration file, change the level
                 self._change_level(current_level)
-            self._connect_airsim()
+            airsim_available = self._connect_airsim()
+            if not airsim_available:
+                print("AirSim connection could not be established. Aborting data collection.")
+                break
             # Setup cameras and agent colors for this level
             self.setup_all_cameras()
             agent_list = self.load_agent_list()
@@ -1424,12 +1430,14 @@ if __name__ == "__main__":
     
     # Define the list of configuration files to process using raw strings to avoid unicode escape errors
     config_files_to_process = [
-        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-forest-test3.json",
-        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-lake.json",
-        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-river.json",
-        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-rural.json",
-        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-city.json",
+        # r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-forest-test3.json",
+        r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\Ablation-Studies\small-far-drones\config-forest.json",
+        # r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\Ablation-Studies\small-far-drones\config-lake.json",
+        # r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\Ablation-Studies\small-far-drones\config-river.json",
+        # r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\Ablation-Studies\small-far-drones\config-rural.json",
+        # r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\Ablation-Studies\small-far-drones\config-city.json",
     ]
+        # r"C:\Users\Josh\Desktop\PhD\Research\SiDG-ATRID\git\SIDG-ATRID\scripts\Data_collection\main\config\bo_config-forest-test3.json",
 
     try:
         # Pass the first config file for initial setup of resolution and state saving
